@@ -1,9 +1,13 @@
-all: daemon
+all: daemon c
 
-.PHONY: daemon clean all ancillary
+clean: daemon_clean c_clean
+	rm -rf libancillary-libancillary ancillary
+
+.PHONY: c daemon
 
 ancillary: libancillary-libancillary
-	$(MAKE) -C libancillary-libancillary
+	mv libancillary-libancillary ancillary
+	$(MAKE) -C ancillary
 
 libancillary-libancillary:
 	curl -L https://gitorious.org/libancillary/libancillary/archive-tarball/master | tar xvz
@@ -14,5 +18,8 @@ daemon: ancillary
 daemon_clean:
 	$(MAKE) -C daemon clean
 
-clean: daemon_clean
-	rm -rf libancillary-libancillary
+c:
+	$(MAKE) -C c
+
+c_clean:
+	$(MAKE) -C c clean

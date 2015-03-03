@@ -1,6 +1,6 @@
 CPP=g++
-CFLAGS=-std=c++0x -I../libancillary-libancillary
-LDFLAGS=-L../libancillary-libancillary -lancillary
+CFLAGS=-std=c++0x -I../ancillary -Wall
+LDFLAGS=-L../ancillary -lancillary
 
 all: testimonyd
 
@@ -13,4 +13,5 @@ clean:
 	$(CPP) $(CFLAGS) -c -o $@ $<
 
 testimonyd: daemon.o
-	$(CPP) -o testimonyd $^ $(LDFLAGS)
+	$(CPP) -o testimonyd $^ $(LDFLAGS) && \
+	sudo setcap 'CAP_NET_RAW+ep CAP_NET_ADMIN+ep CAP_IPC_LOCK+ep' testimonyd
