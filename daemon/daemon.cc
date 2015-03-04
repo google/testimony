@@ -28,65 +28,41 @@ int CheckForError(const char* file, int line, int x) {
 #define IGNORE(x) x;
 #define ERR() Error(__FILE__, __LINE__)
 
-const char* kSocketName = ".testimony_socket";
 #ifndef UNIX_PATH_MAX
 #define UNIX_PATH_MAX 108
 #endif
 
-// With much thanks to
-// http://blog.varunajayasiri.com/passing-file-descriptors-between-processes-using-sendmsg-and-recvmsg
-static int SendFileDescriptor(int socket, int fd_to_send) {
-  struct msghdr message;
-  struct iovec iov[1];
-  struct cmsghdr* control_message = NULL;
-  char ctrl_buf[CMSG_SPACE(sizeof(int))];
-  char data[1];
-
-  memset(&message, 0, sizeof(struct msghdr));
-  memset(ctrl_buf, 0, CMSG_SPACE(sizeof(int)));
-
-  // We are passing at least one byte of data so that recvmsg() won't return 0
-  data[0] = ' ';
-  iov[0].iov_base = data;
-  iov[0].iov_len = sizeof(data);
-
-  message.msg_name = NULL;
-  message.msg_namelen = 0;
-  message.msg_iov = iov;
-  message.msg_iovlen = 1;
-  message.msg_controllen = CMSG_SPACE(sizeof(int));
-  message.msg_control = ctrl_buf;
-
-  control_message = CMSG_FIRSTHDR(&message);
-  control_message->cmsg_level = SOL_SOCKET;
-  control_message->cmsg_type = SCM_RIGHTS;
-  control_message->cmsg_len = CMSG_LEN(sizeof(int));
-
-  *((int*)CMSG_DATA(control_message)) = fd_to_send;
-
-  return sendmsg(socket, &message, 0);
-}
-
-int AFPacket(const char* iface, void** ring) {
-  int fd = CHKERR(socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL)));
+int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
+             int fanout_id, int fanout_type, int* fd, void** ring) {
+  fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+  if (fd < 0) {
+    return -1;
+  }
 
   int v = TPACKET_V3;
-  CHKERR(setsockopt(fd, SOL_PACKET, PACKET_VERSION, &v, sizeof(v)));
+  int r = setsockopt(fd, SOL_PACKET, PACKET_VERSION, &v, sizeof(v));
+  if (r < 0) {
+    goto fail1;
+  }
 
   tpacket_req3 tp3;
   memset(&tp3, 0, sizeof(tp3));
-  tp3.tp_block_size = 1 << 20;
-  tp3.tp_frame_size = 1 << 20;
-  tp3.tp_block_nr = 16;
-  tp3.tp_frame_nr = tp3.tp_block_nr * (tp3.tp_block_size / tp3.tp_frame_size);
-  tp3.tp_retire_blk_tov = 1000;  // timeout, ms
-  CHKERR(setsockopt(fd, SOL_PACKET, PACKET_RX_RING, &tp3, sizeof(tp3)));
+  tp3.tp_block_size = block_size;
+  tp3.tp_frame_size = block_size;
+  tp3.tp_block_nr = block_nr;
+  tp3.tp_frame_nr = block_nr;
+  tp3.tp_retire_blk_tov = block_ms;  // timeout, ms
+  r = setsockopt(fd, SOL_PACKET, PACKET_RX_RING, &tp3, sizeof(tp3));
+  if (r < 0) {
+    goto fail1;
+  }
 
   *ring =
       mmap(NULL, tp3.tp_block_size * tp3.tp_block_nr, PROT_READ | PROT_WRITE,
            MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, fd, 0);
   if (*ring == MAP_FAILED) {
-    ERR();
+    errno = EINVAL;
+    goto fail1;
   }
 
   struct sockaddr_ll ll;
@@ -97,41 +73,27 @@ int AFPacket(const char* iface, void** ring) {
   if (ll.sll_ifindex == 0) {
     ERR();
   }
-  CHKERR(bind(fd, (struct sockaddr*)&ll, sizeof(ll)));
-
-  int fanout = (getpid() & 0xFFFF) | (PACKET_FANOUT_LB << 16);
-  CHKERR(setsockopt(fd, SOL_PACKET, PACKET_FANOUT, &fanout, sizeof(fanout)));
-  return fd;
-}
-
-int main(int argc, char** argv) {
-  printf("Removing old socket\n");
-  IGNORE(unlink(kSocketName));
-  printf("Creating socket\n");
-  int sock = CHKERR(socket(AF_UNIX, SOCK_SEQPACKET, 0));
-  struct sockaddr_un addr;
-  addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, kSocketName, UNIX_PATH_MAX);
-  printf("Binding\n");
-  CHKERR(bind(sock, (struct sockaddr*)&addr, sizeof(addr)));
-  printf("Listening\n");
-  CHKERR(listen(sock, 5));
-
-  void* ring = NULL;
-  printf("Getting AF_PACKET FD\n");
-  int tp3fd = AFPacket("em1", &ring);
-
-  while (true) {
-    printf("Accepting... ");
-    fflush(stdout);
-    struct sockaddr_un caddr;
-    socklen_t clen = sizeof(caddr);
-    int cfd = CHKERR(accept(sock, (struct sockaddr*)&caddr, &clen));
-    printf("%d\n", cfd);
-    CHKERR(SendFileDescriptor(cfd, tp3fd));
-    printf("Closing %d\n", cfd);
-    CHKERR(close(cfd));
+  r = bind(fd, (struct sockaddr*)&ll, sizeof(ll));
+  if (r < 0) {
+    goto fail2;
   }
 
+  int fanout = (fanout_id & 0xFFFF) | (fanout_type << 16);
+  r = setsockopt(fd, SOL_PACKET, PACKET_FANOUT, &fanout, sizeof(fanout));
+  if (r < 0) {
+    goto fail2;
+  }
   return 0;
+
+fail2 : {
+  int err = errno;
+  munmap(*ring);
+  errno = err;
+}
+fail1 : {
+  int err = errno;
+  close(*fd);
+  errno = err;
+}
+  return -1;
 }

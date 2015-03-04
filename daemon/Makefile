@@ -1,17 +1,12 @@
-CPP=g++
-CFLAGS=-std=c++0x -Wall -fno-strict-aliasing
-LDFLAGS=
+GO=go
 
 all: testimonyd
 
 .PHONY: all clean
 
 clean:
-	rm -rf *.o testimonyd
+	rm -rf testimonyd
 
-%.o: %.cc
-	$(CPP) $(CFLAGS) -c -o $@ $<
-
-testimonyd: daemon.o
-	$(CPP) -o testimonyd $^ $(LDFLAGS) && \
+testimonyd:
+	$(GO) build -o testimonyd && \
 	sudo setcap 'CAP_NET_RAW+ep CAP_NET_ADMIN+ep CAP_IPC_LOCK+ep' testimonyd
