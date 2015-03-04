@@ -1,14 +1,14 @@
-all: daemon c
+all: testimonyd c
 
-clean: daemon_clean c_clean
+clean: testimonyd_clean c_clean
 
-.PHONY: c daemon
+.PHONY: c testimonyd
 
-daemon:
-	$(MAKE) -C daemon
+testimonyd:
+	$(MAKE) -C testimonyd
 
-daemon_clean:
-	$(MAKE) -C daemon clean
+testimonyd_clean:
+	$(MAKE) -C testimonyd clean
 
 c:
 	$(MAKE) -C c
