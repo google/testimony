@@ -1,6 +1,8 @@
 package main
 
 import (
+  "bytes"
+	"encoding/json"
 	"log"
 	"net"
 )
@@ -10,30 +12,41 @@ type Config struct {
 }
 
 type SocketConfig struct {
+  Interface string
 	BlockSize          int
 	NumBlocks          int
 	BlockTimeoutMillis int
 	FanoutType         int
+	FanoutSize         int
+}
+
+type Request struct {
+	Name string
+	Num  int
 }
 
 type Testimony struct {
-	sockets map[string]*Socket
+	sockets map[string][]*Socket
 }
 
 func RunTestimony(c Config) {
 	t := &Testimony{
-		sockets: map[string]*Socket{},
+		sockets: map[string][]*Socket{},
 	}
+  fanoutID := 0
 	for name, sc := range c.Sockets {
+    fanoutID++
 		if t.sockets[name] != nil {
 			log.Fatal("invalid config: duplicate socket name %q", name)
 		}
-		sock, err := newSocket(sc)
-		if err != nil {
-			log.Fatal("invalid config %+v: %v", sc, err)
+		for i := 0; i < sc.FanoutSize; i++ {
+			sock, err := newSocket(sc, fanoutID, name, i)
+			if err != nil {
+				log.Fatal("invalid config %+v: %v", sc, err)
+			}
+			t.sockets[name] = append(t.sockets[name], sock)
+			go sock.run()
 		}
-		t.sockets[name] = sock
-		go sock.run()
 	}
 	t.run()
 }
@@ -53,21 +66,33 @@ func (t *Testimony) run() {
 }
 
 func (t *Testimony) handle(c *net.UnixConn) {
+	defer func() {
+		if c != nil {
+			c.Close()
+		}
+	}()
 	log.Println("handling new connection %p", c)
-	var name [100]byte
-	n, err := c.Read(name[:])
+	var buf [100]byte
+	n, err := c.Read(buf[:])
 	if err != nil {
-		log.Println("new conn failed to send name: %v", err)
-		c.Close()
+		log.Println("new conn failed to read conf: %v", err)
 		return
 	}
-	socket := t.sockets[string(name[:n])]
-	if socket == nil {
-		log.Println("new conn requested invalid name %q", string(name[:n]))
-		c.Close()
+	var req Request
+	if err := json.NewDecoder(bytes.NewBuffer(buf[:n])).Decode(&req); err != nil {
+		log.Println("new conn request could not be decoded: %v", err)
 		return
 	}
-	socket.newConns <- c
+	socks := t.sockets[req.Name]
+	if socks == nil {
+		log.Println("new conn requested invalid name %q", req.Name)
+		return
+	} else if len(socks) <= req.Num || req.Num < 0 {
+		log.Println("new conn requested invalid num %d (we have %d)", req.Num, len(socks))
+		return
+	}
+	socks[req.Num].newConns <- c
+	c = nil // so it doesn't get closed by deferred func.
 }
 
 func main() {
