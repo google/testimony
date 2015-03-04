@@ -1,6 +1,6 @@
 CPP=g++
-CFLAGS=-std=c++0x -I../ancillary -Wall
-LDFLAGS=-L../ancillary -lancillary
+CFLAGS=-std=c++0x -Wall -fno-strict-aliasing
+LDFLAGS=
 
 all: testimonyd
 
