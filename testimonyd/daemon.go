@@ -1,18 +1,23 @@
 package main
 
 import (
-  "bytes"
+	"bytes"
 	"encoding/json"
+	"flag"
+	"io/ioutil"
 	"log"
 	"net"
+	"syscall"
 )
+
+var confFilename = flag.String("config", "/etc/testimony.conf", "Testimony config")
 
 type Config struct {
 	Sockets map[string]SocketConfig
 }
 
 type SocketConfig struct {
-  Interface string
+	Interface          string
 	BlockSize          int
 	NumBlocks          int
 	BlockTimeoutMillis int
@@ -33,9 +38,9 @@ func RunTestimony(c Config) {
 	t := &Testimony{
 		sockets: map[string][]*Socket{},
 	}
-  fanoutID := 0
+	fanoutID := 0
 	for name, sc := range c.Sockets {
-    fanoutID++
+		fanoutID++
 		if t.sockets[name] != nil {
 			log.Fatal("invalid config: duplicate socket name %q", name)
 		}
@@ -52,7 +57,7 @@ func RunTestimony(c Config) {
 }
 
 func (t *Testimony) run() {
-	list, err := net.Listen("unixpacket", ".testimony_socket")
+	list, err := net.Listen("unixgram", ".testimony_socket")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -71,29 +76,49 @@ func (t *Testimony) handle(c *net.UnixConn) {
 			c.Close()
 		}
 	}()
-	log.Println("handling new connection %p", c)
-	var buf [100]byte
+	log.Printf("handling new connection %p", c)
+	var buf [1024]byte
 	n, err := c.Read(buf[:])
 	if err != nil {
-		log.Println("new conn failed to read conf: %v", err)
+		log.Printf("new conn failed to read conf: %v", err)
 		return
 	}
 	var req Request
 	if err := json.NewDecoder(bytes.NewBuffer(buf[:n])).Decode(&req); err != nil {
-		log.Println("new conn request could not be decoded: %v", err)
+		log.Printf("new conn request could not be decoded: %v", err)
 		return
 	}
 	socks := t.sockets[req.Name]
 	if socks == nil {
-		log.Println("new conn requested invalid name %q", req.Name)
+		log.Printf("new conn requested invalid name %q", req.Name)
 		return
 	} else if len(socks) <= req.Num || req.Num < 0 {
-		log.Println("new conn requested invalid num %d (we have %d)", req.Num, len(socks))
+		log.Printf("new conn requested invalid num %d (we have %d)", req.Num, len(socks))
 		return
 	}
-	socks[req.Num].newConns <- c
+	sock := socks[req.Num]
+	fdMsg := syscall.UnixRights(sock.fd)
+	n, n2, err := c.WriteMsgUnix(
+		[]byte{0xff, 0xff, 0xff, 0xff}, // dummy bytes, invalid block offset
+		fdMsg, nil)
+	if err != nil || n != 4 || n2 != len(fdMsg) {
+		log.Printf("new conn failed to send file descriptor: %v", err)
+		return
+	}
+	log.Printf("new conn spun up, passing off to socket")
+	sock.newConns <- c
 	c = nil // so it doesn't get closed by deferred func.
 }
 
 func main() {
+	flag.Parse()
+	confdata, err := ioutil.ReadFile(*confFilename)
+	if err != nil {
+		log.Fatalf("could not read configuration %q: %v", *confFilename, err)
+	}
+	var config Config
+	if err := json.NewDecoder(bytes.NewBuffer(confdata)).Decode(&config); err != nil {
+		log.Fatal("could not parse configuration %q: %v", *confFilename, err)
+	}
+	RunTestimony(config)
 }
