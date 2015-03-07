@@ -4,20 +4,18 @@ CC=gcc
 CFLAGS=-fPIC -Wall -g -O2 -I. -fno-strict-aliasing
 LDFLAGS=
 
-all: libtestimony.a
+all: libtestimony.a testimony_client
 
 .PHONY: all clean
 
 clean:
-	rm -rf *.o *.a *.so *.so.*
+	rm -rf *.o *.a *.so *.so.* testimony_client
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-test: testimony_test
-
-testimony_test: testimony_test.o libtestimony.a
-	$(CC) -o testimony_test testimony_test.o $(LDFLAGS) -L. -ltestimony
+testimony_client: testimony_client.o libtestimony.a
+	$(CC) -o testimony_client testimony_client.o $(LDFLAGS) -L. -ltestimony
 
 libtestimony.a: testimony.o
 	$(AR) cr $@ $^ && \

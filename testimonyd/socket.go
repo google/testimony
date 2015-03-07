@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"log"
 	"net"
+	"sync"
 	"time"
 	"unsafe"
 )
@@ -24,8 +25,9 @@ type Socket struct {
 	oldBlocks    chan int
 	currentConns map[*conn]bool
 	ring         uintptr
-	blockUse     []int
+	blockUse     []int // protected by mu
 	index        int
+	mu           sync.Mutex
 }
 
 func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, error) {
@@ -60,6 +62,8 @@ func (s *Socket) block(i int) *C.struct_tpacket_hdr_v1 {
 }
 
 func (s *Socket) blockReady(i int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.blockUse[i] == 0 && s.block(i).block_status != 0
 }
 
@@ -84,13 +88,18 @@ func (s *Socket) run() {
 		case c := <-s.newConns:
 			s.addNewConn(c)
 		case c := <-s.oldConns:
+			close(c.newBlocks)
 			delete(s.currentConns, c)
 		case b := <-s.oldBlocks:
+			s.mu.Lock()
 			s.blockUse[b]--
+			v(2, "block %d in socket %q num %d down to %d uses", b, s.name, s.num, s.blockUse[b])
 			if s.blockUse[b] == 0 {
 				s.clearBlock(b)
 			}
+			s.mu.Unlock()
 		case b := <-s.newBlocks:
+			s.mu.Lock()
 			if s.blockUse[b] != 0 {
 				log.Fatalf("block %d in socket %q num %d already in use", b, s.name, s.num)
 			}
@@ -99,12 +108,17 @@ func (s *Socket) run() {
 				case c.newBlocks <- b:
 					s.blockUse[b]++
 				default:
-					log.Printf("connection failed to receive a block")
+					v(1, "connection failed to receive a block")
 				}
 			}
+			blk := s.block(b)
 			if s.blockUse[b] == 0 {
+				v(2, "block %d in socket %q num %d with %d packets ignored", b, s.name, s.num, blk.num_pkts)
 				s.clearBlock(b)
+			} else {
+				v(2, "block %d in socket %q num %d with %d packets sent to %d processes", b, s.name, s.num, blk.num_pkts, s.blockUse[b])
 			}
+			s.mu.Unlock()
 		}
 	}
 }
@@ -117,32 +131,48 @@ type conn struct {
 }
 
 func (c *conn) run() {
+	outstanding := make([]bool, c.s.conf.NumBlocks)
+	var mu sync.Mutex // protects outstanding
 	readDone := make(chan struct{})
 	writeDone := make(chan struct{})
-	allDone := false
 	go func() { // handle reads
 		defer close(readDone)
-		for !allDone {
+		for {
 			var buf [4]byte
 			n, err := c.c.Read(buf[:])
 			if err != nil || n != 4 {
-				log.Printf("conn read error (%d bytes): %v", n, err)
+				v(1, "conn read error (%d bytes): %v", n, err)
 				return
 			}
-			c.oldBlocks <- int(binary.BigEndian.Uint32(buf[:]))
+			b := int(binary.BigEndian.Uint32(buf[:]))
+			select {
+			case <-writeDone:
+				v(2, "conn read detected write closure")
+				return
+			case c.oldBlocks <- b:
+				mu.Lock()
+				outstanding[b] = false
+				mu.Unlock()
+			}
 		}
 	}()
 	go func() {
 		defer close(writeDone)
-		for b := range c.newBlocks {
-			if allDone {
+		for {
+			select {
+			case <-readDone:
+				v(2, "conn write detected read closure")
 				return
-			}
-			var buf [4]byte
-			binary.BigEndian.PutUint32(buf[:], uint32(b))
-			if n, err := c.c.Write(buf[:]); err != nil || n != 4 {
-				log.Printf("conn write error (%d bytes): %v", n, err)
-				return
+			case b := <-c.newBlocks:
+				mu.Lock()
+				outstanding[b] = true
+				mu.Unlock()
+				var buf [4]byte
+				binary.BigEndian.PutUint32(buf[:], uint32(b))
+				if n, err := c.c.Write(buf[:]); err != nil || n != 4 {
+					v(1, "conn write error (%d bytes): %v", n, err)
+					return
+				}
 			}
 		}
 	}()
@@ -150,13 +180,22 @@ func (c *conn) run() {
 	case <-readDone:
 	case <-writeDone:
 	}
-	allDone = true
-	log.Printf("closing conn")
+	v(1, "closing conn")
 	c.c.Close()
+	<-readDone
+	<-writeDone
+	for b := range c.newBlocks {
+		c.oldBlocks <- b
+	}
+	for b, got := range outstanding {
+		if got {
+			c.oldBlocks <- b
+		}
+	}
 }
 
 func (s *Socket) addNewConn(c *net.UnixConn) {
-	log.Printf("new connection on socket %q", s.name)
+	v(1, "new connection on socket %q", s.name)
 	newConn := &conn{
 		s:         s,
 		c:         c,

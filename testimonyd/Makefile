@@ -7,6 +7,6 @@ all: testimonyd
 clean:
 	rm -rf testimonyd
 
-testimonyd:
+testimonyd: *.c *.h *.go
 	$(GO) build -o testimonyd && \
 	sudo setcap 'CAP_NET_RAW+ep CAP_NET_ADMIN+ep CAP_IPC_LOCK+ep' testimonyd

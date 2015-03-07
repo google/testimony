@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"io/ioutil"
@@ -13,7 +14,8 @@ import (
 var confFilename = flag.String("config", "/etc/testimony.conf", "Testimony config")
 
 type Config struct {
-	Sockets map[string]SocketConfig
+	ListenSocket string
+	Sockets      map[string]SocketConfig
 }
 
 type SocketConfig struct {
@@ -31,23 +33,25 @@ type Request struct {
 }
 
 type Testimony struct {
+	conf    Config
 	sockets map[string][]*Socket
 }
 
 func RunTestimony(c Config) {
 	t := &Testimony{
+		conf:    c,
 		sockets: map[string][]*Socket{},
 	}
 	fanoutID := 0
 	for name, sc := range c.Sockets {
 		fanoutID++
 		if t.sockets[name] != nil {
-			log.Fatal("invalid config: duplicate socket name %q", name)
+			log.Fatalf("invalid config: duplicate socket name %q", name)
 		}
 		for i := 0; i < sc.FanoutSize; i++ {
 			sock, err := newSocket(sc, fanoutID, name, i)
 			if err != nil {
-				log.Fatal("invalid config %+v: %v", sc, err)
+				log.Fatalf("invalid config %+v: %v", sc, err)
 			}
 			t.sockets[name] = append(t.sockets[name], sock)
 			go sock.run()
@@ -57,14 +61,14 @@ func RunTestimony(c Config) {
 }
 
 func (t *Testimony) run() {
-	list, err := net.Listen("unixgram", ".testimony_socket")
+	list, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: t.conf.ListenSocket})
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to listen on socket: %v", err)
 	}
 	for {
 		c, err := list.Accept()
 		if err != nil {
-			log.Fatal(err)
+			log.Fatalf("failed to accept connection: %v", err)
 		}
 		go t.handle(c.(*net.UnixConn))
 	}
@@ -76,7 +80,7 @@ func (t *Testimony) handle(c *net.UnixConn) {
 			c.Close()
 		}
 	}()
-	log.Printf("handling new connection %p", c)
+	v(1, "handling new connection %p", c)
 	var buf [1024]byte
 	n, err := c.Read(buf[:])
 	if err != nil {
@@ -98,14 +102,16 @@ func (t *Testimony) handle(c *net.UnixConn) {
 	}
 	sock := socks[req.Num]
 	fdMsg := syscall.UnixRights(sock.fd)
+	var msg [8]byte
+	binary.BigEndian.PutUint32(msg[0:4], uint32(sock.conf.BlockSize))
+	binary.BigEndian.PutUint32(msg[4:8], uint32(sock.conf.NumBlocks))
 	n, n2, err := c.WriteMsgUnix(
-		[]byte{0xff, 0xff, 0xff, 0xff}, // dummy bytes, invalid block offset
-		fdMsg, nil)
-	if err != nil || n != 4 || n2 != len(fdMsg) {
+		msg[:], fdMsg, nil)
+	if err != nil || n != len(msg) || n2 != len(fdMsg) {
 		log.Printf("new conn failed to send file descriptor: %v", err)
 		return
 	}
-	log.Printf("new conn spun up, passing off to socket")
+	v(1, "new conn spun up, passing off to socket")
 	sock.newConns <- c
 	c = nil // so it doesn't get closed by deferred func.
 }
@@ -118,7 +124,7 @@ func main() {
 	}
 	var config Config
 	if err := json.NewDecoder(bytes.NewBuffer(confdata)).Decode(&config); err != nil {
-		log.Fatal("could not parse configuration %q: %v", *confFilename, err)
+		log.Fatalf("could not parse configuration %q: %v", *confFilename, err)
 	}
 	RunTestimony(config)
 }
