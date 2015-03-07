@@ -51,6 +51,7 @@ func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, er
 		&fd, &ring); err != nil {
 		return nil, err
 	}
+	s.fd = int(fd)
 	s.ring = uintptr(ring)
 	return s, nil
 }
@@ -72,7 +73,6 @@ func (s *Socket) clearBlock(i int) {
 }
 
 func (s *Socket) getNewBlocks() {
-	return
 	for {
 		for !s.blockReady(s.index) {
 			time.Sleep(time.Millisecond)
@@ -146,6 +146,7 @@ func (c *conn) run() {
 				return
 			}
 			b := int(binary.BigEndian.Uint32(buf[:]))
+			v(2, "block %d in socket %q num %d returned from client", b, c.s.name, c.s.num)
 			select {
 			case <-writeDone:
 				v(2, "conn read detected write closure")
@@ -154,6 +155,7 @@ func (c *conn) run() {
 				mu.Lock()
 				outstanding[b] = false
 				mu.Unlock()
+				c.s.oldBlocks <- b
 			}
 		}
 	}()

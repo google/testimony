@@ -193,8 +193,6 @@ int testimony_return_block(testimony* t, struct tpacket_block_desc* block) {
   r = send_be_uint32(t->sock_fd, blockptr);
   if (r < 0) {
     return -errno;
-  } else if (r != 4) {
-    return -EIO;
   }
   return 0;
 }
