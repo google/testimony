@@ -72,6 +72,7 @@ func (s *Socket) clearBlock(i int) {
 }
 
 func (s *Socket) getNewBlocks() {
+	return
 	for {
 		for !s.blockReady(s.index) {
 			time.Sleep(time.Millisecond)

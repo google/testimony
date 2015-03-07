@@ -25,7 +25,7 @@ static void put_be_uint32(char* buf, uint32_t n) {
   buf[2] = n >> 8;
   buf[3] = n;
 }
-static int recv_be_uint32(int fd, uint32_t* n) {
+static int recv_be_uint32(int fd, int* n) {
   char buf[4];
   int received = 0;
   int r;
@@ -37,7 +37,7 @@ static int recv_be_uint32(int fd, uint32_t* n) {
   *n = get_be_uint32(buf);
   return 0;
 }
-static int send_be_uint32(int fd, uint32_t n) {
+static int send_be_uint32(int fd, int n) {
   char buf[4];
   int r;
   int sent = 0;
@@ -183,7 +183,6 @@ int testimony_get_block(testimony* t, struct tpacket_block_desc** block) {
 }
 
 int testimony_return_block(testimony* t, struct tpacket_block_desc* block) {
-  char blockbuf[4];
   int r;
   uintptr_t blockptr = (uintptr_t)block;
   blockptr -= (uintptr_t)t->ring;

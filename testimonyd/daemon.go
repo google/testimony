@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net"
+	"os"
 	"syscall"
 )
 
@@ -61,6 +62,7 @@ func RunTestimony(c Config) {
 }
 
 func (t *Testimony) run() {
+	os.Remove(t.conf.ListenSocket) // ignore errors
 	list, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: t.conf.ListenSocket})
 	if err != nil {
 		log.Fatalf("failed to listen on socket: %v", err)
@@ -118,6 +120,7 @@ func (t *Testimony) handle(c *net.UnixConn) {
 
 func main() {
 	flag.Parse()
+	v(1, "Starting testimonyd...")
 	confdata, err := ioutil.ReadFile(*confFilename)
 	if err != nil {
 		log.Fatalf("could not read configuration %q: %v", *confFilename, err)
