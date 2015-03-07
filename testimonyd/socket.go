@@ -7,7 +7,7 @@ import "C"
 
 import (
 	"encoding/binary"
-	"log"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -21,13 +21,11 @@ type Socket struct {
 	fd           int
 	newConns     chan *net.UnixConn
 	oldConns     chan *conn
-	newBlocks    chan int
-	oldBlocks    chan int
+	newBlocks    chan *block
+	blocks       []*block
 	currentConns map[*conn]bool
 	ring         uintptr
-	blockUse     []int // protected by mu
 	index        int
-	mu           sync.Mutex
 }
 
 func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, error) {
@@ -37,10 +35,12 @@ func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, er
 		conf:         sc,
 		newConns:     make(chan *net.UnixConn),
 		oldConns:     make(chan *conn),
-		newBlocks:    make(chan int),
-		oldBlocks:    make(chan int),
+		newBlocks:    make(chan *block),
 		currentConns: map[*conn]bool{},
-		blockUse:     make([]int, sc.NumBlocks),
+		blocks:       make([]*block, sc.NumBlocks),
+	}
+	for i := 0; i < sc.NumBlocks; i++ {
+		s.blocks[i] = &block{s: s, index: i}
 	}
 	iface := C.CString(sc.Interface)
 	defer C.free(unsafe.Pointer(iface))
@@ -56,28 +56,18 @@ func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, er
 	return s, nil
 }
 
-func (s *Socket) block(i int) *C.struct_tpacket_hdr_v1 {
-	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(s.ring + uintptr(s.conf.BlockSize*i)))
-	hdr := (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&blockDesc.hdr[0]))
-	return hdr
-}
-
-func (s *Socket) blockReady(i int) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.blockUse[i] == 0 && s.block(i).block_status != 0
-}
-
-func (s *Socket) clearBlock(i int) {
-	s.block(i).block_status = 0
+func (s *Socket) String() string {
+	return fmt.Sprintf("[S:%v:%v]", s.name, s.num)
 }
 
 func (s *Socket) getNewBlocks() {
 	for {
-		for !s.blockReady(s.index) {
+		b := s.blocks[s.index]
+		for !b.ready() {
 			time.Sleep(time.Millisecond)
 		}
-		s.newBlocks <- s.index
+		b.ref()
+		s.newBlocks <- b
 		s.index = (s.index + 1) % s.conf.NumBlocks
 	}
 }
@@ -91,35 +81,17 @@ func (s *Socket) run() {
 		case c := <-s.oldConns:
 			close(c.newBlocks)
 			delete(s.currentConns, c)
-		case b := <-s.oldBlocks:
-			s.mu.Lock()
-			s.blockUse[b]--
-			v(2, "block %d in socket %q num %d down to %d uses", b, s.name, s.num, s.blockUse[b])
-			if s.blockUse[b] == 0 {
-				s.clearBlock(b)
-			}
-			s.mu.Unlock()
 		case b := <-s.newBlocks:
-			s.mu.Lock()
-			if s.blockUse[b] != 0 {
-				log.Fatalf("block %d in socket %q num %d already in use", b, s.name, s.num)
-			}
 			for c, _ := range s.currentConns {
+				b.ref()
 				select {
 				case c.newBlocks <- b:
-					s.blockUse[b]++
 				default:
-					v(1, "connection failed to receive a block")
+					v(1, "failed to send %v to %v", b, c)
+					b.unref()
 				}
 			}
-			blk := s.block(b)
-			if s.blockUse[b] == 0 {
-				v(2, "block %d in socket %q num %d with %d packets ignored", b, s.name, s.num, blk.num_pkts)
-				s.clearBlock(b)
-			} else {
-				v(2, "block %d in socket %q num %d with %d packets sent to %d processes", b, s.name, s.num, blk.num_pkts, s.blockUse[b])
-			}
-			s.mu.Unlock()
+			b.unref()
 		}
 	}
 }
@@ -127,8 +99,11 @@ func (s *Socket) run() {
 type conn struct {
 	s         *Socket
 	c         *net.UnixConn
-	newBlocks chan int
-	oldBlocks chan int
+	newBlocks chan *block
+}
+
+func (c *conn) String() string {
+	return fmt.Sprintf("[C:%v:%v]", c.s, c.c.RemoteAddr())
 }
 
 func (c *conn) run() {
@@ -142,20 +117,17 @@ func (c *conn) run() {
 			var buf [4]byte
 			n, err := c.c.Read(buf[:])
 			if err != nil || n != 4 {
-				v(1, "conn read error (%d bytes): %v", n, err)
+				v(1, "%v read error (%d bytes): %v", c, n, err)
 				return
 			}
 			b := int(binary.BigEndian.Uint32(buf[:]))
-			v(2, "block %d in socket %q num %d returned from client", b, c.s.name, c.s.num)
+			v(2, "%v %v returned from client", c, b)
+			c.s.blocks[b].unref()
 			select {
 			case <-writeDone:
-				v(2, "conn read detected write closure")
+				v(2, "%v read detected write closure", c)
 				return
-			case c.oldBlocks <- b:
-				mu.Lock()
-				outstanding[b] = false
-				mu.Unlock()
-				c.s.oldBlocks <- b
+			default:
 			}
 		}
 	}()
@@ -164,16 +136,16 @@ func (c *conn) run() {
 		for {
 			select {
 			case <-readDone:
-				v(2, "conn write detected read closure")
+				v(2, "%v write detected read closure", c)
 				return
 			case b := <-c.newBlocks:
 				mu.Lock()
-				outstanding[b] = true
+				outstanding[b.index] = true
 				mu.Unlock()
 				var buf [4]byte
-				binary.BigEndian.PutUint32(buf[:], uint32(b))
+				binary.BigEndian.PutUint32(buf[:], uint32(b.index))
 				if n, err := c.c.Write(buf[:]); err != nil || n != 4 {
-					v(1, "conn write error (%d bytes): %v", n, err)
+					v(1, "%v write error for %v (%d bytes): %v", c, b, n, err)
 					return
 				}
 			}
@@ -183,16 +155,22 @@ func (c *conn) run() {
 	case <-readDone:
 	case <-writeDone:
 	}
-	v(1, "closing conn")
+	v(1, "%v closing", c)
 	c.c.Close()
+	v(3, "%v marking self old", c)
+	c.s.oldConns <- c
+	v(3, "%v waiting for reads", c)
 	<-readDone
+	v(3, "%v waiting for writes", c)
 	<-writeDone
+	v(3, "%v returning channel blocks", c)
 	for b := range c.newBlocks {
-		c.oldBlocks <- b
+		b.unref()
 	}
+	v(3, "%v returning outstanding blocks", c)
 	for b, got := range outstanding {
 		if got {
-			c.oldBlocks <- b
+			c.s.blocks[b].unref()
 		}
 	}
 }
@@ -202,9 +180,53 @@ func (s *Socket) addNewConn(c *net.UnixConn) {
 	newConn := &conn{
 		s:         s,
 		c:         c,
-		newBlocks: make(chan int, 10),
-		oldBlocks: make(chan int, 10),
+		newBlocks: make(chan *block),
 	}
 	s.currentConns[newConn] = true
 	go newConn.run()
+}
+
+type block struct {
+	s     *Socket
+	mu    sync.Mutex
+	r     int
+	index int
+}
+
+func (b *block) ref() {
+	b.mu.Lock()
+	vup(4, 1, "%v ref", b)
+	b.r++
+	b.mu.Unlock()
+}
+
+func (b *block) unref() {
+	b.mu.Lock()
+	vup(4, 1, "%v unref", b)
+	b.r--
+	if b.r == 0 {
+		b.clear()
+	}
+	b.mu.Unlock()
+}
+
+func (b *block) String() string {
+	return fmt.Sprintf("[B:%v:%v]", b.s, b.index)
+}
+
+func (b *block) cblock() *C.struct_tpacket_hdr_v1 {
+	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.BlockSize*b.index)))
+	hdr := (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&blockDesc.hdr[0]))
+	return hdr
+}
+
+func (b *block) clear() {
+	vup(4, 1, "%v clear", b)
+	b.cblock().block_status = 0
+}
+
+func (b *block) ready() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.r == 0 && b.cblock().block_status != 0
 }
