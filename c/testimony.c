@@ -13,43 +13,6 @@
 extern "C" {
 #endif
 
-#define LSHIFT(x, n) (((uint32_t)(x)) << n)
-static uint32_t get_be_uint32(char* buf) {
-  return 0 | LSHIFT(buf[0], 24) | LSHIFT(buf[1], 16) | LSHIFT(buf[2], 8) |
-         LSHIFT(buf[3], 0);
-}
-#undef LSHIFT
-static void put_be_uint32(char* buf, uint32_t n) {
-  buf[0] = n >> 24;
-  buf[1] = n >> 16;
-  buf[2] = n >> 8;
-  buf[3] = n;
-}
-static int recv_be_uint32(int fd, int* n) {
-  char buf[4];
-  int received = 0;
-  int r;
-  while (received < 4) {
-    r = recv(fd, buf + received, 4 - received, 0);
-    if (r < 0) return -1;
-    received += r;
-  }
-  *n = get_be_uint32(buf);
-  return 0;
-}
-static int send_be_uint32(int fd, int n) {
-  char buf[4];
-  int r;
-  int sent = 0;
-  put_be_uint32(buf, n);
-  while (sent < 4) {
-    r = send(fd, buf + sent, 4 - sent, 0);
-    if (r < 0) return -1;
-    sent += r;
-  }
-  return 0;
-}
-
 // With much thanks to
 // http://blog.varunajayasiri.com/passing-file-descriptors-between-processes-using-sendmsg-and-recvmsg
 static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
@@ -57,7 +20,7 @@ static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
   struct iovec iov[1];
   struct cmsghdr* control_message = NULL;
   char ctrl_buf[CMSG_SPACE(sizeof(int))];
-  char data[8];
+  char data[2];
   int r;
 
   memset(&message, 0, sizeof(struct msghdr));
@@ -75,12 +38,12 @@ static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
   message.msg_iovlen = 1;
 
   r = recvmsg(socket, &message, 0);
-  if (r != 8) {
-    fprintf(stderr, "got %d, want 8\n", r);
+  if (r != sizeof(data)) {
+    fprintf(stderr, "got %d, want %d\n", r, (int)sizeof(data));
     return -1;
   }
-  *block_size = get_be_uint32(message.msg_iov[0].iov_base);
-  *block_nr = get_be_uint32(message.msg_iov[0].iov_base + 4);
+  *block_size = 1 << data[0];
+  *block_nr = data[1];
 
   /* Iterate through header to find if there is a file descriptor */
   for (control_message = CMSG_FIRSTHDR(&message); control_message != NULL;
@@ -170,28 +133,32 @@ int testimony_close(testimony* t) {
 }
 
 int testimony_get_block(testimony* t, struct tpacket_block_desc** block) {
-  int blockidx, r;
+  char blockidx;
+  int r;
   if (t->sock_fd == 0 || t->ring == 0) {
     return -EINVAL;
   }
-  r = recv_be_uint32(t->sock_fd, &blockidx);
-  if (r < 0 || blockidx < 0 || blockidx >= t->block_nr) {
+  r = recv(t->sock_fd, &blockidx, 1, 0);
+  if (r != 1 || blockidx < 0 || blockidx >= t->block_nr) {
     return -EIO;
   }
-  *block = (struct tpacket_block_desc*)(t->ring + t->block_size * blockidx);
+  *block =
+      (struct tpacket_block_desc*)(t->ring + t->block_size * (int)blockidx);
   return 0;
 }
 
 int testimony_return_block(testimony* t, struct tpacket_block_desc* block) {
   int r;
   uintptr_t blockptr = (uintptr_t)block;
+  char blockidx;
   blockptr -= (uintptr_t)t->ring;
   blockptr /= t->block_size;
   if (blockptr >= t->block_nr) {
     return -EINVAL;
   }
-  r = send_be_uint32(t->sock_fd, blockptr);
-  if (r < 0) {
+  blockidx = blockptr;
+  r = send(t->sock_fd, &blockidx, 1, 0);
+  if (r != 1) {
     return -errno;
   }
   return 0;

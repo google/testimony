@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"io/ioutil"
@@ -21,11 +20,15 @@ type Config struct {
 
 type SocketConfig struct {
 	Interface          string
-	BlockSize          int
+	BlockSizePowerOf2  int
 	NumBlocks          int
 	BlockTimeoutMillis int
 	FanoutType         int
 	FanoutSize         int
+}
+
+func (s *SocketConfig) BlockSize() int {
+	return 1 << uint(s.BlockSizePowerOf2)
 }
 
 type Request struct {
@@ -104,9 +107,7 @@ func (t *Testimony) handle(c *net.UnixConn) {
 	}
 	sock := socks[req.Num]
 	fdMsg := syscall.UnixRights(sock.fd)
-	var msg [8]byte
-	binary.BigEndian.PutUint32(msg[0:4], uint32(sock.conf.BlockSize))
-	binary.BigEndian.PutUint32(msg[4:8], uint32(sock.conf.NumBlocks))
+	msg := []byte{byte(sock.conf.BlockSizePowerOf2), byte(sock.conf.NumBlocks)}
 	n, n2, err := c.WriteMsgUnix(
 		msg[:], fdMsg, nil)
 	if err != nil || n != len(msg) || n2 != len(fdMsg) {

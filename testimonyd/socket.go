@@ -6,8 +6,9 @@ package main
 import "C"
 
 import (
-	"encoding/binary"
 	"fmt"
+	"io"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -46,7 +47,7 @@ func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, er
 	defer C.free(unsafe.Pointer(iface))
 	var fd C.int
 	var ring unsafe.Pointer
-	if _, err := C.AFPacket(iface, C.int(sc.BlockSize), C.int(sc.NumBlocks),
+	if _, err := C.AFPacket(iface, C.int(sc.BlockSize()), C.int(sc.NumBlocks),
 		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutType),
 		&fd, &ring); err != nil {
 		return nil, err
@@ -67,6 +68,7 @@ func (s *Socket) getNewBlocks() {
 			time.Sleep(time.Millisecond)
 		}
 		b.ref()
+		v(3, "%v got new block %v", s, b)
 		s.newBlocks <- b
 		s.index = (s.index + 1) % s.conf.NumBlocks
 	}
@@ -106,23 +108,41 @@ func (c *conn) String() string {
 	return fmt.Sprintf("[C:%v:%v]", c.s, c.c.RemoteAddr())
 }
 
+// run handles communicating with a single external client via a single
+// connection.  It maintains the invariant that every block it gets via the
+// newBlocks channel will be unref'd exactly once.
 func (c *conn) run() {
-	outstanding := make([]bool, c.s.conf.NumBlocks)
+	outstanding := make([]time.Time, c.s.conf.NumBlocks)
 	var mu sync.Mutex // protects outstanding
 	readDone := make(chan struct{})
 	writeDone := make(chan struct{})
 	go func() { // handle reads
 		defer close(readDone)
 		for {
-			var buf [4]byte
+			var buf [1]byte
 			n, err := c.c.Read(buf[:])
-			if err != nil || n != 4 {
+			if err == io.EOF {
+				return
+			} else if err != nil || n != 1 {
 				v(1, "%v read error (%d bytes): %v", c, n, err)
 				return
 			}
-			b := int(binary.BigEndian.Uint32(buf[:]))
-			v(2, "%v %v returned from client", c, b)
-			c.s.blocks[b].unref()
+			i := int(buf[0])
+			if i < 0 || i >= c.s.conf.NumBlocks {
+				log.Printf("%v got invalid block %d", c, i)
+				return
+			}
+			b := c.s.blocks[i]
+			mu.Lock()
+			t := outstanding[i]
+			outstanding[i] = time.Time{}
+			mu.Unlock()
+			if t.IsZero() {
+				log.Printf("%v returned %v that was not outstanding", c, b)
+				return
+			}
+			v(4, "%v returned %v after %v", c, b, time.Since(t))
+			b.unref()
 			select {
 			case <-writeDone:
 				v(2, "%v read detected write closure", c)
@@ -140,11 +160,11 @@ func (c *conn) run() {
 				return
 			case b := <-c.newBlocks:
 				mu.Lock()
-				outstanding[b.index] = true
+				v(4, "%v sent %v to %v", c.s, b, c)
+				outstanding[b.index] = time.Now()
 				mu.Unlock()
-				var buf [4]byte
-				binary.BigEndian.PutUint32(buf[:], uint32(b.index))
-				if n, err := c.c.Write(buf[:]); err != nil || n != 4 {
+				buf := [1]byte{byte(b.index)}
+				if n, err := c.c.Write(buf[:]); err != nil || n != len(buf) {
 					v(1, "%v write error for %v (%d bytes): %v", c, b, n, err)
 					return
 				}
@@ -163,13 +183,15 @@ func (c *conn) run() {
 	<-readDone
 	v(3, "%v waiting for writes", c)
 	<-writeDone
-	v(3, "%v returning channel blocks", c)
+	v(3, "%v returning unsent blocks", c)
 	for b := range c.newBlocks {
+		v(3, "%v returning unsent %v", c, b)
 		b.unref()
 	}
 	v(3, "%v returning outstanding blocks", c)
 	for b, got := range outstanding {
-		if got {
+		if !got.IsZero() {
+			v(4, "%v returning outstanding %v after %v", c, b, time.Since(got))
 			c.s.blocks[b].unref()
 		}
 	}
@@ -195,17 +217,19 @@ type block struct {
 
 func (b *block) ref() {
 	b.mu.Lock()
-	vup(4, 1, "%v ref", b)
+	vup(5, 1, "%v ref %d->%d", b, b.r, b.r+1)
 	b.r++
 	b.mu.Unlock()
 }
 
 func (b *block) unref() {
 	b.mu.Lock()
-	vup(4, 1, "%v unref", b)
+	vup(5, 1, "%v unref %d->%d", b, b.r, b.r-1)
 	b.r--
 	if b.r == 0 {
 		b.clear()
+	} else if b.r < 0 {
+		panic(fmt.Sprintf("invalid unref of %v to %d", b, b.r))
 	}
 	b.mu.Unlock()
 }
@@ -215,13 +239,13 @@ func (b *block) String() string {
 }
 
 func (b *block) cblock() *C.struct_tpacket_hdr_v1 {
-	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.BlockSize*b.index)))
+	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.BlockSize()*b.index)))
 	hdr := (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&blockDesc.hdr[0]))
 	return hdr
 }
 
 func (b *block) clear() {
-	vup(4, 1, "%v clear", b)
+	vup(3, 2, "%v clear", b)
 	b.cblock().block_status = 0
 }
 

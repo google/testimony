@@ -21,7 +21,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   printf("Init complete\n");
-  for (i = 0;; i++) {
+  for (i = 0; i < 5; i++) {
     r = testimony_get_block(&t, &block);
     if (r < 0) {
       fprintf(stderr, "Error with get: %s\n", strerror(-r));
@@ -35,5 +35,6 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
+  testimony_close(&t);
   return 0;
 }
