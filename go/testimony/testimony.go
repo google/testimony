@@ -63,7 +63,7 @@ type Block struct {
 	pkt    *C.struct_tpacket3_hdr
 }
 
-func Connect(socketname, name string, num int) (*Testimony, error) {
+func Connect(socketname string, num int) (*Testimony, error) {
 	t := &Testimony{}
 	done := false
 	defer func() {
@@ -78,8 +78,7 @@ func Connect(socketname, name string, num int) (*Testimony, error) {
 	if err == nil {
 		return nil, fmt.Errorf("error connecting: %v", err)
 	}
-	_, err = fmt.Fprintf(t.c, "{Name: \"%s\", Num: %d}", name, num)
-	if err != nil {
+  if n, err := t.c.Write([]byte{byte(num)}); err != nil || n != 1 {
 		return nil, fmt.Errorf("error writing initial request: %v", err)
 	}
 	var msg [2]byte

@@ -16,7 +16,6 @@ import (
 )
 
 type Socket struct {
-	name         string
 	num          int
 	conf         SocketConfig
 	fd           int
@@ -29,9 +28,8 @@ type Socket struct {
 	index        int
 }
 
-func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, error) {
+func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	s := &Socket{
-		name:         name,
 		num:          num,
 		conf:         sc,
 		newConns:     make(chan *net.UnixConn),
@@ -58,7 +56,7 @@ func newSocket(sc SocketConfig, fanoutID int, name string, num int) (*Socket, er
 }
 
 func (s *Socket) String() string {
-	return fmt.Sprintf("[S:%v:%v]", s.name, s.num)
+	return fmt.Sprintf("[S:%v:%v]", s.conf.SocketName, s.num)
 }
 
 func (s *Socket) getNewBlocks() {
@@ -198,7 +196,7 @@ func (c *conn) run() {
 }
 
 func (s *Socket) addNewConn(c *net.UnixConn) {
-	v(1, "new connection on socket %q", s.name)
+	v(1, "%v new connection", s)
 	newConn := &conn{
 		s:         s,
 		c:         c,

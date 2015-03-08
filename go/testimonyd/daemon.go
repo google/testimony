@@ -13,12 +13,10 @@ import (
 
 var confFilename = flag.String("config", "/etc/testimony.conf", "Testimony config")
 
-type Config struct {
-	ListenSocket string
-	Sockets      map[string]SocketConfig
-}
+type Testimony []SocketConfig
 
 type SocketConfig struct {
+  SocketName string
 	Interface          string
 	BlockSizePowerOf2  int
 	NumBlocks          int
@@ -36,76 +34,62 @@ type Request struct {
 	Num  int
 }
 
-type Testimony struct {
-	conf    Config
-	sockets map[string][]*Socket
-}
-
-func RunTestimony(c Config) {
-	t := &Testimony{
-		conf:    c,
-		sockets: map[string][]*Socket{},
-	}
+func RunTestimony(t Testimony) {
 	fanoutID := 0
-	for name, sc := range c.Sockets {
+  names := map[string]bool{}
+	for _, sc := range t {
+    if names[sc.SocketName] {
+      log.Fatalf("invalid config: duplicate socket name %q", sc.SocketName)
+    }
+    names[sc.SocketName] = true
+    var socks []*Socket
 		fanoutID++
-		if t.sockets[name] != nil {
-			log.Fatalf("invalid config: duplicate socket name %q", name)
-		}
 		for i := 0; i < sc.FanoutSize; i++ {
-			sock, err := newSocket(sc, fanoutID, name, i)
+			sock, err := newSocket(sc, fanoutID, i)
 			if err != nil {
 				log.Fatalf("invalid config %+v: %v", sc, err)
 			}
-			t.sockets[name] = append(t.sockets[name], sock)
+      socks = append(socks, sock)
 			go sock.run()
 		}
+    go t.run(sc, socks)
 	}
-	t.run()
+  select {}
 }
 
-func (t *Testimony) run() {
-	os.Remove(t.conf.ListenSocket) // ignore errors
-	list, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: t.conf.ListenSocket})
+func (t Testimony) run(sc SocketConfig, socks []*Socket) {
+	os.Remove(sc.SocketName) // ignore errors
+	list, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: sc.SocketName})
 	if err != nil {
 		log.Fatalf("failed to listen on socket: %v", err)
 	}
 	for {
-		c, err := list.Accept()
+		c, err := list.AcceptUnix()
 		if err != nil {
 			log.Fatalf("failed to accept connection: %v", err)
 		}
-		go t.handle(c.(*net.UnixConn))
+		go t.handle(socks, c)
 	}
 }
 
-func (t *Testimony) handle(c *net.UnixConn) {
+func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 	defer func() {
 		if c != nil {
 			c.Close()
 		}
 	}()
 	v(1, "handling new connection %p", c)
-	var buf [1024]byte
-	n, err := c.Read(buf[:])
-	if err != nil {
+	var buf [1]byte
+	if n, err := c.Read(buf[:]); n != 1 || err != nil {
 		log.Printf("new conn failed to read conf: %v", err)
 		return
 	}
-	var req Request
-	if err := json.NewDecoder(bytes.NewBuffer(buf[:n])).Decode(&req); err != nil {
-		log.Printf("new conn request could not be decoded: %v", err)
-		return
-	}
-	socks := t.sockets[req.Name]
-	if socks == nil {
-		log.Printf("new conn requested invalid name %q", req.Name)
-		return
-	} else if len(socks) <= req.Num || req.Num < 0 {
-		log.Printf("new conn requested invalid num %d (we have %d)", req.Num, len(socks))
-		return
-	}
-	sock := socks[req.Num]
+  idx := int(buf[0])
+  if idx < 0 || idx >= len(socks) {
+    log.Printf("new conn invalid index %v", idx)
+    return
+  }
+	sock := socks[idx]
 	fdMsg := syscall.UnixRights(sock.fd)
 	msg := []byte{byte(sock.conf.BlockSizePowerOf2), byte(sock.conf.NumBlocks)}
 	n, n2, err := c.WriteMsgUnix(
@@ -126,9 +110,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("could not read configuration %q: %v", *confFilename, err)
 	}
-	var config Config
-	if err := json.NewDecoder(bytes.NewBuffer(confdata)).Decode(&config); err != nil {
+	var t Testimony
+	if err := json.NewDecoder(bytes.NewBuffer(confdata)).Decode(&t); err != nil {
 		log.Fatalf("could not parse configuration %q: %v", *confFilename, err)
 	}
-	RunTestimony(config)
+	RunTestimony(t)
 }

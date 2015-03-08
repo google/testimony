@@ -9,13 +9,13 @@ int main(int argc, char** argv) {
   int num;
   testimony t;
 
-  if (argc != 4) {
-    fprintf(stderr, "Usage: %s <socket> <name> <num>\n", argv[0]);
+  if (argc != 3) {
+    fprintf(stderr, "Usage: %s <socket> <num>\n", argv[0]);
   }
-  num = atoi(argv[3]);
+  num = atoi(argv[2]);
 
   printf("Init...\n");
-  r = testimony_init(&t, argv[1], argv[2], num);
+  r = testimony_init(&t, argv[1], num);
   if (r < 0) {
     fprintf(stderr, "Error with init: %s\n", strerror(-r));
     return 1;

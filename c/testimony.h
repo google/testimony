@@ -16,7 +16,7 @@ typedef struct {
 } testimony;
 
 // Returns 0 on success, -errno on failure.
-int testimony_init(testimony* t, const char* socket_name, const char* name, int num);
+int testimony_init(testimony* t, const char* socket_name, int num);
 int testimony_close(testimony* t);
 // Get a block of packets.
 int testimony_get_block(testimony* t, struct tpacket_block_desc** block);

@@ -57,11 +57,10 @@ static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
   return -1;
 }
 
-int testimony_init(testimony* t, const char* socket_name, const char* name,
-                   int num) {
+int testimony_init(testimony* t, const char* socket_name, int num) {
   struct sockaddr_un saddr, laddr;
-  int n, r, err;
-  char buf[1024];
+  int r, err;
+  char idx = num;
   memset(t, 0, sizeof(*t));
   saddr.sun_family = AF_UNIX;
   strncpy(saddr.sun_path, socket_name, sizeof(saddr.sun_path) - 1);
@@ -86,12 +85,7 @@ int testimony_init(testimony* t, const char* socket_name, const char* name,
     fprintf(stderr, "connect\n");
     goto fail;
   }
-  n = snprintf(buf, 1024, "{\"Name\": \"%s\", \"Num\": %d}", name, num);
-  if (n < 0 || n > 1024) {
-    fprintf(stderr, "snprintf\n");
-    goto fail;
-  }
-  r = send(t->sock_fd, buf, n, 0);
+  r = send(t->sock_fd, &idx, 1, 0);
   if (r < 0) {
     fprintf(stderr, "send\n");
     goto fail;
