@@ -96,6 +96,7 @@ int testimony_init(testimony* t, const char* socket_name, int num) {
     errno = EPROTONOSUPPORT;
     goto fail;
   }
+  msg = num;
   r = send(t->sock_fd, &msg, 1, 0);
   if (r < 0) {
     fprintf(stderr, "send\n");

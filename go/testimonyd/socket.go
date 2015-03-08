@@ -45,7 +45,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	defer C.free(unsafe.Pointer(iface))
 	var fd C.int
 	var ring unsafe.Pointer
-	if _, err := C.AFPacket(iface, C.int(sc.BlockSize()), C.int(sc.NumBlocks),
+	if _, err := C.AFPacket(iface, C.int(sc.blockSize()), C.int(sc.NumBlocks),
 		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutType),
 		&fd, &ring); err != nil {
 		return nil, err
@@ -237,7 +237,7 @@ func (b *block) String() string {
 }
 
 func (b *block) cblock() *C.struct_tpacket_hdr_v1 {
-	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.BlockSize()*b.index)))
+	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.blockSize()*b.index)))
 	hdr := (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&blockDesc.hdr[0]))
 	return hdr
 }

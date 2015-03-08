@@ -80,12 +80,12 @@ func Connect(socketname string, num int) (*Testimony, error) {
 	if err == nil {
 		return nil, fmt.Errorf("error connecting: %v", err)
 	}
-  var version [1]byte
-  if n, err := t.c.Read(version[:]); err != nil || n != 1 {
-    return nil, fmt.Errorf("error reading version byte: %v", err)
-  } else if version[0] != protocolVersion {
-    return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, version[0])
-  }
+	var version [1]byte
+	if n, err := t.c.Read(version[:]); err != nil || n != 1 {
+		return nil, fmt.Errorf("error reading version byte: %v", err)
+	} else if version[0] != protocolVersion {
+		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, version[0])
+	}
 	if n, err := t.c.Write([]byte{byte(num)}); err != nil || n != 1 {
 		return nil, fmt.Errorf("error writing initial request: %v", err)
 	}
