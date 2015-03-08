@@ -14,6 +14,7 @@ import (
 var confFilename = flag.String("config", "/etc/testimony.conf", "Testimony config")
 
 type Testimony []SocketConfig
+const protocolVersion = 1
 
 type SocketConfig struct {
 	SocketName         string
@@ -79,7 +80,11 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 		}
 	}()
 	v(1, "handling new connection %p", c)
-	var buf [1]byte
+  buf := [1]byte{protocolVersion}
+  if n, err := c.Write(buf[:]); n != 1 || err != nil {
+    log.Printf("new conn failed to write version: %v", err)
+    return
+  }
 	if n, err := c.Read(buf[:]); n != 1 || err != nil {
 		log.Printf("new conn failed to read conf: %v", err)
 		return

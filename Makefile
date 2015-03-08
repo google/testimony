@@ -1,14 +1,14 @@
-all: testimonyd c
+all: go c
 
-clean: testimonyd_clean c_clean
+clean: go_clean c_clean
 
-.PHONY: c testimonyd
+.PHONY: c go c_clean go_clean all clean
 
-testimonyd:
-	$(MAKE) -C testimonyd
+go:
+	$(MAKE) -C go
 
-testimonyd_clean:
-	$(MAKE) -C testimonyd clean
+go_clean:
+	$(MAKE) -C go clean
 
 c:
 	$(MAKE) -C c

@@ -13,6 +13,8 @@
 extern "C" {
 #endif
 
+static const char kProtocolVersion = 1;
+
 // With much thanks to
 // http://blog.varunajayasiri.com/passing-file-descriptors-between-processes-using-sendmsg-and-recvmsg
 static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
@@ -60,7 +62,7 @@ static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
 int testimony_init(testimony* t, const char* socket_name, int num) {
   struct sockaddr_un saddr, laddr;
   int r, err;
-  char idx = num;
+  char msg;
   memset(t, 0, sizeof(*t));
   saddr.sun_family = AF_UNIX;
   strncpy(saddr.sun_path, socket_name, sizeof(saddr.sun_path) - 1);
@@ -85,7 +87,16 @@ int testimony_init(testimony* t, const char* socket_name, int num) {
     fprintf(stderr, "connect\n");
     goto fail;
   }
-  r = send(t->sock_fd, &idx, 1, 0);
+  r = recv(t->sock_fd, &msg, 1, 0);
+  if (r < 0) {
+    fprintf(stderr, "recv\n");
+    goto fail;
+  } else if (msg != kProtocolVersion) {
+    fprintf(stderr, "version\n");
+    errno = EPROTONOSUPPORT;
+    goto fail;
+  }
+  r = send(t->sock_fd, &msg, 1, 0);
   if (r < 0) {
     fprintf(stderr, "send\n");
     goto fail;
