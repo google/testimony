@@ -16,7 +16,7 @@ var confFilename = flag.String("config", "/etc/testimony.conf", "Testimony confi
 type Testimony []SocketConfig
 
 type SocketConfig struct {
-  SocketName string
+	SocketName         string
 	Interface          string
 	BlockSizePowerOf2  int
 	NumBlocks          int
@@ -36,25 +36,25 @@ type Request struct {
 
 func RunTestimony(t Testimony) {
 	fanoutID := 0
-  names := map[string]bool{}
+	names := map[string]bool{}
 	for _, sc := range t {
-    if names[sc.SocketName] {
-      log.Fatalf("invalid config: duplicate socket name %q", sc.SocketName)
-    }
-    names[sc.SocketName] = true
-    var socks []*Socket
+		if names[sc.SocketName] {
+			log.Fatalf("invalid config: duplicate socket name %q", sc.SocketName)
+		}
+		names[sc.SocketName] = true
+		var socks []*Socket
 		fanoutID++
 		for i := 0; i < sc.FanoutSize; i++ {
 			sock, err := newSocket(sc, fanoutID, i)
 			if err != nil {
 				log.Fatalf("invalid config %+v: %v", sc, err)
 			}
-      socks = append(socks, sock)
+			socks = append(socks, sock)
 			go sock.run()
 		}
-    go t.run(sc, socks)
+		go t.run(sc, socks)
 	}
-  select {}
+	select {}
 }
 
 func (t Testimony) run(sc SocketConfig, socks []*Socket) {
@@ -84,11 +84,11 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 		log.Printf("new conn failed to read conf: %v", err)
 		return
 	}
-  idx := int(buf[0])
-  if idx < 0 || idx >= len(socks) {
-    log.Printf("new conn invalid index %v", idx)
-    return
-  }
+	idx := int(buf[0])
+	if idx < 0 || idx >= len(socks) {
+		log.Printf("new conn invalid index %v", idx)
+		return
+	}
 	sock := socks[idx]
 	fdMsg := syscall.UnixRights(sock.fd)
 	msg := []byte{byte(sock.conf.BlockSizePowerOf2), byte(sock.conf.NumBlocks)}
