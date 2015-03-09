@@ -60,17 +60,11 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
     if (r < 0) {
       goto fail1;
     }
-#ifdef SO_LOCK_FILTER
     v = 1;
     r = setsockopt(*fd, SOL_SOCKET, SO_LOCK_FILTER, &v, sizeof(v));
-    // SO_LOCK_FILTER is relatively recent, so there's kernels around that don't
-    // support it.  If we compile on a kernel that does, then move to one that
-    // doesn't, we'd rather that the program work.  So ignore that specific
-    // error.
-    if (r < 0 && errno != ENOPROTOOPT) {
+    if (r < 0) {
       goto fail1;
     }
-#endif
   }
 
   *ring =
