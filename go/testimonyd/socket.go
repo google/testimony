@@ -2,14 +2,19 @@ package main
 
 // #include "daemon.h"
 // #include <linux/if_packet.h>
+// #include <linux/filter.h>
 // #include <stdlib.h>  // for C.free
 import "C"
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 	"unsafe"
@@ -38,6 +43,14 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 		currentConns: map[*conn]bool{},
 		blocks:       make([]*block, sc.NumBlocks),
 	}
+	var filt *C.struct_sock_fprog
+	if sc.Filter != "" {
+		f, err := compileFilter(sc.Interface, sc.Filter)
+		if err != nil {
+			return nil, fmt.Errorf("unable to compile filter %q on interface %q: %v", sc.Filter, sc.Interface, err)
+		}
+		filt = &f.filt
+	}
 	for i := 0; i < sc.NumBlocks; i++ {
 		s.blocks[i] = &block{s: s, index: i}
 	}
@@ -46,7 +59,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	var fd C.int
 	var ring unsafe.Pointer
 	if _, err := C.AFPacket(iface, C.int(sc.blockSize()), C.int(sc.NumBlocks),
-		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutType),
+		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutType), filt,
 		&fd, &ring); err != nil {
 		return nil, err
 	}
@@ -251,4 +264,44 @@ func (b *block) ready() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.r == 0 && b.cblock().block_status != 0
+}
+
+type filter struct {
+	bpfs []C.struct_sock_filter
+	filt C.struct_sock_fprog
+}
+
+func compileFilter(iface, filt string) (*filter, error) {
+	cmd := exec.Command("/usr/sbin/tcpdump", "-i", iface, "-ddd", filt)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("could not run tcpdump to compile BPF: %v", err)
+	}
+	ints := []int{}
+	scanner := bufio.NewScanner(&out)
+	scanner.Split(bufio.ScanWords)
+	for scanner.Scan() {
+		i, err := strconv.Atoi(scanner.Text())
+		if err != nil {
+			return nil, fmt.Errorf("error scanning token %q: %v", scanner.Text(), err)
+		}
+		ints = append(ints, i)
+	}
+	if len(ints) == 0 || len(ints) != ints[0]*4+1 {
+		return nil, fmt.Errorf("invalid length of tcpdump ints")
+	}
+	f := &filter{}
+	ints = ints[1:]
+	for i := 0; i < len(ints); i += 4 {
+		f.bpfs = append(f.bpfs, C.struct_sock_filter{
+			code: C.__u16(ints[i]),
+			jt:   C.__u8(ints[i+1]),
+			jf:   C.__u8(ints[i+2]),
+			k:    C.__u32(ints[i+3]),
+		})
+	}
+	f.filt.len = C.ushort(len(f.bpfs))
+	f.filt.filter = (*C.struct_sock_filter)(unsafe.Pointer(&f.bpfs[0]))
+	return f, nil
 }

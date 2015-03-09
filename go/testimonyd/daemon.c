@@ -8,13 +8,16 @@
 #include <net/if.h>           // if_nametoindex()
 #include <sys/mman.h>         // mmap(), PROT_*, MAP_*
 #include <unistd.h>           // close()
+#include <linux/filter.h>     // sock_fprog, sock_filter
 
 #ifndef UNIX_PATH_MAX
 #define UNIX_PATH_MAX 108
 #endif
 
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
-             int fanout_id, int fanout_type, int* fd, void** ring) {
+             int fanout_id, int fanout_type, const struct sock_fprog* filter,
+             // outputs:
+             int* fd, void** ring) {
   *fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
   if (*fd < 0) {
     return -1;
@@ -37,6 +40,23 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
   r = setsockopt(*fd, SOL_PACKET, PACKET_RX_RING, &tp3, sizeof(tp3));
   if (r < 0) {
     goto fail1;
+  }
+  if (filter) {
+    r = setsockopt(*fd, SOL_SOCKET, SO_ATTACH_FILTER, filter, sizeof(*filter));
+    if (r < 0) {
+      goto fail1;
+    }
+#ifdef SO_LOCK_FILTER
+    v = 1;
+    r = setsockopt(*fd, SOL_SOCKET, SO_LOCK_FILTER, &v, sizeof(v));
+    // SO_LOCK_FILTER is relatively recent, so there's kernels around that don't
+    // support it.  If we compile on a kernel that does, then move to one that
+    // doesn't, we'd rather that the program work.  So ignore that specific
+    // error.
+    if (r < 0 && errno != ENOPROTOOPT) {
+      goto fail1;
+    }
+#endif
   }
 
   *ring =

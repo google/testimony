@@ -29,6 +29,7 @@ type SocketConfig struct {
 	FanoutType         int
 	FanoutSize         int
 	User               string
+	Filter             string
 }
 
 func (s SocketConfig) uid() (int, error) {
