@@ -23,6 +23,8 @@ then watches for new packet blocks and serves indexes to those blocks out to
 each client, reference-counting the blocks and returning them to the kernel only
 when all clients have released them.
 
+### Configuration ###
+
 On creation, sockets are configured based on the /etc/testimony.conf
 configuration file, which lists all sockets to be created.  Each socket contains
 these configuration options:
@@ -56,3 +58,35 @@ these configuration options:
      allows root to provide different sockets with different capabilities to
      specific users.
 *   **Filter:** BPF filter for this socket.
+
+### Wire Protocol ###
+
+Testimony uses an extremely simple wire protocol for establishing client
+connections and passing memory regions back and forth:
+
+    SERVER                                              CLIENT
+    ------                                              ------
+             <-- initial connection ---
+             --- version byte (1) --->
+             <-- fanout number (1-FanoutSize) ---
+             --- socket FD, block size, num blocks -->
+
+           .. At this point, the client is connected. ..
+           .. All other communication is one of the   ..
+           .. following 2 possibilities:              ..
+
+             --- block index for client (1 byte) -->
+             <-- block index to return (1 byte) ---
+
+Most communication is single-byte "packets".  The one excepion is the message
+that sends the socket FD from server to client.  That contains the FD itself, as
+well as two bytes:  block size (as a power of 2, so 20 == 1<<10 == 1MB) and
+number of blocks.
+
+Once communication is established, server and client simply exchange block
+indexes.  The server sends a block index to the client when that block is
+available to process (and it references the block internally).  The client
+returns the block index to the server when it's done processing it, and the
+client unrefs that block.  When a block has no more references, it is returned
+to the kernel to be refilled with packets.
+
