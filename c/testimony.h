@@ -29,14 +29,16 @@ typedef struct {
   int block_nr;
 } testimony;
 
-// Returns 0 on success, -errno on failure.
-int testimony_init(testimony* t, const char* socket_name, int num);
-int testimony_close(testimony* t);
-// Get a block of packets.
-int testimony_get_block(testimony* t, struct tpacket_block_desc** block);
-// Return a block of packets returned by testimony_get_block.
-int testimony_return_block(testimony* t, struct tpacket_block_desc* block);
+// The following functions return 0 on success, -errno on failure.
 
+// Initializes a connection to the testimony server.
+int testimony_init(testimony* t, const char* socket_name, int num);
+// Closes a connection to the testimony server.
+int testimony_close(testimony* t);
+// Gets a new block of packets from testimony.
+int testimony_get_block(testimony* t, struct tpacket_block_desc** block);
+// Returns a processed block of packets back to testimony.
+int testimony_return_block(testimony* t, struct tpacket_block_desc* block);
 
 #ifdef __cplusplus
 }

@@ -64,11 +64,6 @@ func (s SocketConfig) blockSize() int {
 	return 1 << uint(s.BlockSizePowerOf2)
 }
 
-type Request struct {
-	Name string
-	Num  int
-}
-
 func RunTestimony(t Testimony) {
 	fanoutID := 0
 	names := map[string]bool{}

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package testimony provides a method for sharing AF_PACKET memory regions
+// across multiple processes.
 package testimony
 
 // #include <linux/if_packet.h>
@@ -38,14 +40,17 @@ func localSocketName() string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("testimony_go_client_%s", hex.EncodeToString(randbytes[:])))
 }
 
-type Testimony struct {
+// Conn is a connection to the testimonyd server.  It allows the current process
+// to share testimonyd AF_PACKET sockets.
+type Conn struct {
 	c                    *net.UnixConn
 	fd                   int
 	ring                 []byte
 	numBlocks, blockSize int
 }
 
-func (t *Testimony) Close() (ret error) {
+// Close closes the connection to the testimonyd server.
+func (t *Conn) Close() (ret error) {
 	if t.ring != nil {
 		if err := syscall.Munmap(t.ring); err != nil {
 			ret = err
@@ -70,8 +75,10 @@ func (t *Testimony) Close() (ret error) {
 	return
 }
 
+// Block is an AF_PACKET TPACKETv3 block, and provides access to the packets in
+// that block.
 type Block struct {
-	t      *Testimony
+	t      *Conn
 	i      int
 	B      []byte
 	offset int
@@ -79,8 +86,9 @@ type Block struct {
 	pkt    *C.struct_tpacket3_hdr
 }
 
-func Connect(socketname string, num int) (*Testimony, error) {
-	t := &Testimony{}
+// Connect connects to the testimonyd server.
+func Connect(socketname string, num int) (*Conn, error) {
+	t := &Conn{}
 	done := false
 	defer func() {
 		if !done {
@@ -133,7 +141,8 @@ func Connect(socketname string, num int) (*Testimony, error) {
 	return t, nil
 }
 
-func (t *Testimony) Block() (*Block, error) {
+// Block gets the next block of packets from testimonyd.
+func (t *Conn) Block() (*Block, error) {
 	var m [1]byte
 	if n, err := t.c.Read(m[:]); err != nil || n != 1 {
 		return nil, fmt.Errorf("error reading block index: %v", err)
@@ -150,7 +159,8 @@ func (t *Testimony) Block() (*Block, error) {
 	}, nil
 }
 
-func (b *Block) Close() error {
+// Return returns this block to the testimonyd server.
+func (b *Block) Return() error {
 	m := [1]byte{byte(b.i)}
 	if _, err := b.t.c.Write(m[:]); err != nil {
 		return fmt.Errorf("error writing index: %v", err)
@@ -164,6 +174,8 @@ func (b *Block) header() *C.struct_tpacket_hdr_v1 {
 	return (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&desc.hdr[0]))
 }
 
+// Next allows the user to iterate through the set of packets in this Block,
+// changing the value returned by Packet.
 func (b *Block) Next() bool {
 	if b.offset == 0 {
 		b.left = int(b.header().num_pkts)
@@ -179,6 +191,8 @@ func (b *Block) Next() bool {
 	return true
 }
 
+// Packet provides access to the current packet.  Next calls change this to
+// point to the next packet in the block.
 func (b *Block) Packet() *C.struct_tpacket3_hdr {
 	return b.pkt
 }
