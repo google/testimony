@@ -39,5 +39,7 @@ libtestimony.so: testimony.o
 	$(CC) -shared -o $@ $^
 
 install: libtestimony.a libtestimony.so
-	cp -f -v $^ /usr/lib && \
-	cp -f -v testimony.h /usr/include
+	cp -f -v libtestimony.{a,so} /usr/lib && \
+	chmod 644 /usr/lib/libtestimony.{a,so} && \
+	cp -f -v testimony.h /usr/include && \
+	chmod 644 /usr/include/testimony.h

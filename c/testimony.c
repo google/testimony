@@ -20,12 +20,22 @@
 #include <stdio.h>       // printf()
 #include <sys/mman.h>    // mmap(), MAP_*, PROT_*
 #include <stdint.h>      // uint32_t
+#include <poll.h>        // poll(), POLLIN, pollfd
+#include <stdlib.h>      // malloc(), free()
 
 #include <testimony.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct testimony_internal {
+  int sock_fd;
+  int afpacket_fd;
+  char* ring;
+  int block_size;
+  int block_nr;
+};
 
 static const char kProtocolVersion = 1;
 
@@ -73,11 +83,16 @@ static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
   return -1;
 }
 
-int testimony_init(testimony* t, const char* socket_name, int num) {
+int testimony_init(testimony* tp, const char* socket_name, int num) {
   struct sockaddr_un saddr, laddr;
   int r, err;
   char msg;
+  testimony t = (testimony)malloc(sizeof(struct testimony_internal));
+  if (t == NULL) {
+    return -ENOMEM;
+  }
   memset(t, 0, sizeof(*t));
+
   saddr.sun_family = AF_UNIX;
   strncpy(saddr.sun_path, socket_name, sizeof(saddr.sun_path) - 1);
   saddr.sun_path[sizeof(saddr.sun_path) - 1] = 0;
@@ -129,36 +144,49 @@ int testimony_init(testimony* t, const char* socket_name, int num) {
   t->ring = mmap(NULL, t->block_size * t->block_nr, PROT_READ,
                  MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, t->afpacket_fd, 0);
   if (t->ring == MAP_FAILED) {
+    t->ring = 0;
     fprintf(stderr, "mmap\n");
     errno = EINVAL;
     goto fail;
   }
   printf("Got ring: %p\n", t->ring);
+  *tp = t;
   return 0;
 
 fail:
   err = errno;
-  close(t->sock_fd);
-  t->sock_fd = 0;
-  t->afpacket_fd = 0;
-  t->ring = 0;
+  testimony_close(t);
   return -err;
 }
 
-int testimony_close(testimony* t) {
+int testimony_close(testimony t) {
   if (t->ring != 0) {
-    munmap(t->ring, t->block_nr * t->block_size);
+    if (munmap(t->ring, t->block_nr * t->block_size) < 0) return -errno;
   }
-  return close(t->sock_fd);
+  if (close(t->sock_fd) < 0) return -errno;
+  free(t);
+  return 0;
 }
 
-int testimony_get_block(testimony* t, struct tpacket_block_desc** block) {
+int testimony_get_block(testimony t, int timeout_millis, struct tpacket_block_desc** block) {
+  struct pollfd pfd;
   char blockidx;
   int r;
+  *block = NULL;
   if (t->sock_fd == 0 || t->ring == 0) {
     return -EINVAL;
   }
+  if (timeout_millis >= 0) {
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.fd = t->sock_fd;
+    pfd.events = POLLIN;
+    r = poll(&pfd, 1, timeout_millis);
+    if (r < 0) { return -errno; }  // error, return negative errno.
+    if (r == 0) { return 0; }  // timed out, no block ready
+    // A read is ready, fall through.
+  }
   r = recv(t->sock_fd, &blockidx, 1, 0);
+  if (r < 0) { return -errno; }
   if (r != 1 || blockidx < 0 || blockidx >= t->block_nr) {
     return -EIO;
   }
@@ -167,7 +195,7 @@ int testimony_get_block(testimony* t, struct tpacket_block_desc** block) {
   return 0;
 }
 
-int testimony_return_block(testimony* t, struct tpacket_block_desc* block) {
+int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
   int r;
   uintptr_t blockptr = (uintptr_t)block;
   char blockidx;
@@ -182,6 +210,16 @@ int testimony_return_block(testimony* t, struct tpacket_block_desc* block) {
     return -errno;
   }
   return 0;
+}
+
+int testimony_block_size(testimony t) {
+  if (t->sock_fd == 0) { return -1; }
+  return t->block_size;
+}
+
+int testimony_block_nr(testimony t) {
+  if (t->sock_fd == 0) { return -1; }
+  return t->block_nr;
 }
 
 #ifdef __cplusplus

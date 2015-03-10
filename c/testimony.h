@@ -21,24 +21,26 @@
 extern "C" {
 #endif
 
-typedef struct {
-  int sock_fd;
-  int afpacket_fd;
-  char* ring;
-  int block_size;
-  int block_nr;
-} testimony;
+struct testimony_internal;
+typedef struct testimony_internal* testimony;
 
 // The following functions return 0 on success, -errno on failure.
 
 // Initializes a connection to the testimony server.
 int testimony_init(testimony* t, const char* socket_name, int num);
-// Closes a connection to the testimony server.
-int testimony_close(testimony* t);
+// Closes a connection to the testimony server.  t should not be reused after
+// this call.
+int testimony_close(testimony t);
 // Gets a new block of packets from testimony.
-int testimony_get_block(testimony* t, struct tpacket_block_desc** block);
+// If timeout_millis < 0, block forever.  If == 0, don't block.  If > 0, block
+// for at most the given number of milliseconds.
+int testimony_get_block(testimony t, int timeout_millis, struct tpacket_block_desc** block);
 // Returns a processed block of packets back to testimony.
-int testimony_return_block(testimony* t, struct tpacket_block_desc* block);
+int testimony_return_block(testimony t, struct tpacket_block_desc* block);
+// Returns the size of an individual block, in bytes.
+int testimony_block_size(testimony t);
+// Returns the number of blocks.
+int testimony_block_nr(testimony t);
 
 #ifdef __cplusplus
 }
