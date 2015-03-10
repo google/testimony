@@ -36,19 +36,19 @@ int main(int argc, char** argv) {
   }
   printf("Init complete\n");
   for (i = 0; i < 5; i++) {
-    r = testimony_get_block(&t, &block);
+    r = testimony_get_block(t, -1, &block);
     if (r < 0) {
       fprintf(stderr, "Error with get: %s\n", strerror(-r));
       return 1;
     }
     printf("%d\tgot block %p with %d packets\n", i, block,
            block->hdr.bh1.num_pkts);
-    r = testimony_return_block(&t, block);
+    r = testimony_return_block(t, block);
     if (r < 0) {
       fprintf(stderr, "Error with return: %s\n", strerror(-r));
       return 1;
     }
   }
-  testimony_close(&t);
+  testimony_close(t);
   return 0;
 }
