@@ -72,10 +72,11 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	defer C.free(unsafe.Pointer(iface))
 	var fd C.int
 	var ring unsafe.Pointer
+	var errStr *C.char
 	if _, err := C.AFPacket(iface, C.int(sc.blockSize()), C.int(sc.NumBlocks),
 		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutType), filt,
-		&fd, &ring); err != nil {
-		return nil, err
+		&fd, &ring, &errStr); err != nil {
+		return nil, fmt.Errorf("C AFPacket call failed: %v: %v", C.GoString(errStr), err)
 	}
 	s.fd = int(fd)
 	s.ring = uintptr(ring)

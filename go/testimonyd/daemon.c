@@ -31,7 +31,7 @@
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
              int fanout_id, int fanout_type, const struct sock_fprog* filter,
              // outputs:
-             int* fd, void** ring) {
+             int* fd, void** ring, const char** err) {
   *fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
   if (*fd < 0) {
     return -1;
@@ -41,6 +41,7 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
   int v = TPACKET_V3;
   int r = setsockopt(*fd, SOL_PACKET, PACKET_VERSION, &v, sizeof(v));
   if (r < 0) {
+    *err = "setsockopt PACKET_VERSION failure";
     goto fail1;
   }
 
@@ -53,17 +54,20 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
   tp3.tp_retire_blk_tov = block_ms;  // timeout, ms
   r = setsockopt(*fd, SOL_PACKET, PACKET_RX_RING, &tp3, sizeof(tp3));
   if (r < 0) {
+    *err = "setsockopt PACKET_RX_RING failure";
     goto fail1;
   }
   if (filter) {
 #if defined(SO_ATTACH_FILTER) && defined(SO_LOCK_FILTER)
     r = setsockopt(*fd, SOL_SOCKET, SO_ATTACH_FILTER, filter, sizeof(*filter));
     if (r < 0) {
+      *err = "setsockopt SO_ATTACH_FILTER error";
       goto fail1;
     }
     v = 1;
     r = setsockopt(*fd, SOL_SOCKET, SO_LOCK_FILTER, &v, sizeof(v));
     if (r < 0) {
+      *err = "setsockopt SO_LOCK_FILTER error";
       goto fail1;
     }
 #else
@@ -73,6 +77,7 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
     // filter on the socket they receive and elevate their permissions.  In
     // either case, fail hard.  If this isn't supported, folks can still use
     // testimonyd without filters.
+    *err = "filter requested, but BPF filtering or filter locking unsupported";
     errno = ENOSYS;
     goto fail1;
 #endif
@@ -82,6 +87,7 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
       mmap(NULL, tp3.tp_block_size * tp3.tp_block_nr, PROT_READ | PROT_WRITE,
            MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, *fd, 0);
   if (*ring == MAP_FAILED) {
+    *err = "ring mmap failed";
     errno = EINVAL;
     goto fail1;
   }
@@ -92,16 +98,19 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
   ll.sll_protocol = htons(ETH_P_ALL);
   ll.sll_ifindex = if_nametoindex(iface);
   if (ll.sll_ifindex == 0) {
+    *err = "if_nametoindex failed";
     errno = EINVAL;
     goto fail2;
   }
   r = bind(*fd, (struct sockaddr*)&ll, sizeof(ll));
   if (r < 0) {
+    *err = "bind failed";
     goto fail2;
   }
 
   r = setsockopt(*fd, SOL_PACKET, PACKET_FANOUT, &fanout, sizeof(fanout));
   if (r < 0) {
+    *err = "setsockopt PACKET_FANOUT failed";
     goto fail2;
   }
   return 0;
