@@ -18,9 +18,9 @@ CC=gcc
 CFLAGS=-fPIC -Wall -g -O2 -I. -fno-strict-aliasing
 LDFLAGS=
 
-all: libtestimony.a testimony_client
+all: libtestimony.a libtestimony.so testimony_client
 
-.PHONY: all clean
+.PHONY: all clean install
 
 clean:
 	rm -rf *.o *.a *.so *.so.* testimony_client
@@ -34,3 +34,10 @@ testimony_client: testimony_client.o libtestimony.a
 libtestimony.a: testimony.o
 	$(AR) cr $@ $^ && \
 	$(RANLIB) $@
+
+libtestimony.so: testimony.o
+	$(CC) -shared -o $@ $^
+
+install: libtestimony.a libtestimony.so
+	cp -f -v $^ /usr/lib && \
+	cp -f -v testimony.h /usr/include
