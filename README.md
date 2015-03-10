@@ -75,13 +75,13 @@ connections and passing memory regions back and forth:
            .. All other communication is one of the   ..
            .. following 2 possibilities:              ..
 
-             --- block index for client (1 byte) -->
-             <-- block index to return (1 byte) ---
+             --- block index for client (4 bytes BE) -->
+             <-- block index to return (4 bytes BE) ---
 
-Most communication is single-byte "packets".  The one excepion is the message
+Most communication is 4-byte "packets".  The one excepion is the message
 that sends the socket FD from server to client.  That contains the FD itself, as
-well as two bytes:  block size (as a power of 2, so 20 == 1<<10 == 1MB) and
-number of blocks.
+well as 8 bytes, representing the block size and number of blocks as big-endian
+uint32.
 
 Once communication is established, server and client simply exchange block
 indexes.  The server sends a block index to the client when that block is

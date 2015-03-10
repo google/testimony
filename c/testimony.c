@@ -33,20 +33,62 @@ struct testimony_internal {
   int sock_fd;
   int afpacket_fd;
   char* ring;
-  int block_size;
-  int block_nr;
+  size_t block_size;
+  size_t block_nr;
 };
 
 static const char kProtocolVersion = 1;
 
+static uint32_t get_be_32(unsigned char* a) {
+#define LSH(x, n) (((uint32_t)x) << n)
+  return LSH(a[0], 24) | LSH(a[1], 16) | LSH(a[2], 8) | a[3];
+#undef LSH
+}
+static void set_be_32(unsigned char* a, uint32_t x) {
+  a[0] = x >> 24;
+  a[1] = x >> 16;
+  a[2] = x >> 8;
+  a[3] = x;
+}
+static int recv_be_32(int fd, size_t* out) {
+  char msg[4];
+  char* writeto = msg;
+  char* limit = msg + 4;
+  int r;
+  while (writeto < limit) {
+    r = recv(fd, writeto, limit - writeto, 0);
+    if (r < 0) {
+      return -1;
+    }
+    writeto += r;
+  }
+  *out = get_be_32(msg);
+  return 0;
+}
+static int send_be_32(int fd, size_t in) {
+  char msg[4];
+  char* readfrom = msg;
+  char* limit = msg + 4;
+  int r;
+  set_be_32(msg, in);
+  while (readfrom < limit) {
+    r = send(fd, readfrom, limit - readfrom, 0);
+    if (r < 0) {
+      return -1;
+    }
+    readfrom += r;
+  }
+  return 0;
+}
+
 // With much thanks to
 // http://blog.varunajayasiri.com/passing-file-descriptors-between-processes-using-sendmsg-and-recvmsg
-static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
+static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr) {
   struct msghdr message;
   struct iovec iov[1];
   struct cmsghdr* control_message = NULL;
   char ctrl_buf[CMSG_SPACE(sizeof(int))];
-  char data[2];
+  char data[8];
   int r;
 
   memset(&message, 0, sizeof(struct msghdr));
@@ -65,11 +107,10 @@ static int recv_file_descriptor(int socket, int* block_size, int* block_nr) {
 
   r = recvmsg(socket, &message, 0);
   if (r != sizeof(data)) {
-    fprintf(stderr, "got %d, want %d\n", r, (int)sizeof(data));
     return -1;
   }
-  *block_size = 1 << data[0];
-  *block_nr = data[1];
+  *block_size = get_be_32(data);
+  *block_nr = get_be_32(data + 4);
 
   /* Iterate through header to find if there is a file descriptor */
   for (control_message = CMSG_FIRSTHDR(&message); control_message != NULL;
@@ -116,7 +157,7 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
     fprintf(stderr, "connect\n");
     goto fail;
   }
-  r = recv(t->sock_fd, &msg, 1, 0);
+  r = recv(t->sock_fd, &msg, sizeof(msg), 0);
   if (r < 0) {
     fprintf(stderr, "recv\n");
     goto fail;
@@ -171,7 +212,7 @@ int testimony_close(testimony t) {
 int testimony_get_block(testimony t, int timeout_millis,
                         struct tpacket_block_desc** block) {
   struct pollfd pfd;
-  char blockidx;
+  size_t blockidx;
   int r;
   *block = NULL;
   if (t->sock_fd == 0 || t->ring == 0) {
@@ -190,30 +231,29 @@ int testimony_get_block(testimony t, int timeout_millis,
     }
     // A read is ready, fall through.
   }
-  r = recv(t->sock_fd, &blockidx, 1, 0);
+  r = recv_be_32(t->sock_fd, &blockidx);
   if (r < 0) {
     return -errno;
   }
-  if (r != 1 || blockidx < 0 || blockidx >= t->block_nr) {
+  if (blockidx >= t->block_nr) {
+    fprintf(stderr, "%d >= %d\n", blockidx,t->block_nr);
     return -EIO;
   }
   *block =
-      (struct tpacket_block_desc*)(t->ring + t->block_size * (int)blockidx);
+      (struct tpacket_block_desc*)(t->ring + t->block_size * blockidx);
   return 0;
 }
 
 int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
   int r;
-  uintptr_t blockptr = (uintptr_t)block;
-  char blockidx;
-  blockptr -= (uintptr_t)t->ring;
+  size_t blockptr = (size_t)block;
+  blockptr -= (size_t)t->ring;
   blockptr /= t->block_size;
   if (blockptr >= t->block_nr) {
     return -EINVAL;
   }
-  blockidx = blockptr;
-  r = send(t->sock_fd, &blockidx, 1, 0);
-  if (r != 1) {
+  r = send_be_32(t->sock_fd, blockptr);
+  if (r < 0) {
     return -errno;
   }
   return 0;

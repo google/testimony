@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -37,7 +38,7 @@ const protocolVersion = 1
 type SocketConfig struct {
 	SocketName         string
 	Interface          string
-	BlockSizePowerOf2  int
+	BlockSize          int
 	NumBlocks          int
 	BlockTimeoutMillis int
 	FanoutType         int
@@ -58,10 +59,6 @@ func (s SocketConfig) uid() (int, error) {
 		return 0, fmt.Errorf("could not get user: %v", err)
 	}
 	return strconv.Atoi(u.Uid)
-}
-
-func (s SocketConfig) blockSize() int {
-	return 1 << uint(s.BlockSizePowerOf2)
 }
 
 func RunTestimony(t Testimony) {
@@ -142,7 +139,10 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 	}
 	sock := socks[idx]
 	fdMsg := syscall.UnixRights(sock.fd)
-	msg := []byte{byte(sock.conf.BlockSizePowerOf2), byte(sock.conf.NumBlocks)}
+	var msg [8]byte
+	binary.BigEndian.PutUint32(msg[:], uint32(sock.conf.BlockSize))
+	binary.BigEndian.PutUint32(msg[4:], uint32(sock.conf.NumBlocks))
+	log.Println("msg: %+v", msg)
 	n, n2, err := c.WriteMsgUnix(
 		msg[:], fdMsg, nil)
 	if err != nil || n != len(msg) || n2 != len(fdMsg) {

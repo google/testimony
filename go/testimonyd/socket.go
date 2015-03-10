@@ -23,6 +23,7 @@ import "C"
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -73,13 +74,14 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	var fd C.int
 	var ring unsafe.Pointer
 	var errStr *C.char
-	if _, err := C.AFPacket(iface, C.int(sc.blockSize()), C.int(sc.NumBlocks),
+	if _, err := C.AFPacket(iface, C.int(sc.BlockSize), C.int(sc.NumBlocks),
 		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutType), filt,
 		&fd, &ring, &errStr); err != nil {
 		return nil, fmt.Errorf("C AFPacket call failed: %v: %v", C.GoString(errStr), err)
 	}
 	s.fd = int(fd)
 	s.ring = uintptr(ring)
+	v(1, "%v set up with %+v", s, sc)
 	return s, nil
 }
 
@@ -145,15 +147,15 @@ func (c *conn) run() {
 	go func() { // handle reads
 		defer close(readDone)
 		for {
-			var buf [1]byte
+			var buf [4]byte
 			n, err := c.c.Read(buf[:])
 			if err == io.EOF {
 				return
-			} else if err != nil || n != 1 {
+			} else if err != nil || n != len(buf) {
 				v(1, "%v read error (%d bytes): %v", c, n, err)
 				return
 			}
-			i := int(buf[0])
+			i := int(binary.BigEndian.Uint32(buf[:]))
 			if i < 0 || i >= c.s.conf.NumBlocks {
 				log.Printf("%v got invalid block %d", c, i)
 				return
@@ -189,7 +191,8 @@ func (c *conn) run() {
 				v(4, "%v sent %v to %v", c.s, b, c)
 				outstanding[b.index] = time.Now()
 				mu.Unlock()
-				buf := [1]byte{byte(b.index)}
+				var buf [4]byte
+				binary.BigEndian.PutUint32(buf[:], uint32(b.index))
 				if n, err := c.c.Write(buf[:]); err != nil || n != len(buf) {
 					v(1, "%v write error for %v (%d bytes): %v", c, b, n, err)
 					return
@@ -265,7 +268,7 @@ func (b *block) String() string {
 }
 
 func (b *block) cblock() *C.struct_tpacket_hdr_v1 {
-	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.blockSize()*b.index)))
+	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.BlockSize)*uintptr(b.index)))
 	hdr := (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&blockDesc.hdr[0]))
 	return hdr
 }

@@ -21,6 +21,7 @@ import "C"
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -111,7 +112,7 @@ func Connect(socketname string, num int) (*Conn, error) {
 	if n, err := t.c.Write([]byte{byte(num)}); err != nil || n != 1 {
 		return nil, fmt.Errorf("error writing initial request: %v", err)
 	}
-	var msg [2]byte
+	var msg [8]byte
 	var oob [1024]byte
 	n, n2, _, _, err := t.c.ReadMsgUnix(msg[:], oob[:])
 	if err != nil {
@@ -132,8 +133,8 @@ func Connect(socketname string, num int) (*Conn, error) {
 	} else {
 		t.fd = fds[0]
 	}
-	t.blockSize = 1 << uint(msg[0])
-	t.numBlocks = int(msg[1])
+	t.blockSize = int(binary.BigEndian.Uint32(msg[:]))
+	t.numBlocks = int(binary.BigEndian.Uint32(msg[4:]))
 	if t.ring, err = syscall.Mmap(t.fd, 0, t.blockSize*t.numBlocks, syscall.PROT_READ, syscall.MAP_SHARED|syscall.MAP_LOCKED|syscall.MAP_NORESERVE); err != nil {
 		return nil, fmt.Errorf("mmap failed: %v", err)
 	}
@@ -143,11 +144,11 @@ func Connect(socketname string, num int) (*Conn, error) {
 
 // Block gets the next block of packets from testimonyd.
 func (t *Conn) Block() (*Block, error) {
-	var m [1]byte
-	if n, err := t.c.Read(m[:]); err != nil || n != 1 {
+	var m [4]byte
+	if n, err := t.c.Read(m[:]); err != nil || n != len(m) {
 		return nil, fmt.Errorf("error reading block index: %v", err)
 	}
-	idx := int(m[0])
+	idx := int(binary.BigEndian.Uint32(m[:]))
 	if idx < 0 || idx >= t.numBlocks {
 		return nil, fmt.Errorf("read invalid index %d", idx)
 	}
@@ -161,7 +162,8 @@ func (t *Conn) Block() (*Block, error) {
 
 // Return returns this block to the testimonyd server.
 func (b *Block) Return() error {
-	m := [1]byte{byte(b.i)}
+	var m [4]byte
+	binary.BigEndian.PutUint32(m[:], uint32(b.i))
 	if _, err := b.t.c.Write(m[:]); err != nil {
 		return fmt.Errorf("error writing index: %v", err)
 	}
