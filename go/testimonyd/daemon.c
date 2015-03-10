@@ -56,6 +56,7 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
     goto fail1;
   }
   if (filter) {
+#if defined(SO_ATTACH_FILTER) && defined(SO_LOCK_FILTER)
     r = setsockopt(*fd, SOL_SOCKET, SO_ATTACH_FILTER, filter, sizeof(*filter));
     if (r < 0) {
       goto fail1;
@@ -65,6 +66,16 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
     if (r < 0) {
       goto fail1;
     }
+#else
+    // If folks want a filter, that means they want to give access to specific
+    // packets to a specific user.  If we can't attach a filter, we give them
+    // too many packets.  If we can't lock the filter, they can change the
+    // filter on the socket they receive and elevate their permissions.  In
+    // either case, fail hard.  If this isn't supported, folks can still use
+    // testimonyd without filters.
+    errno = ENOSYS;
+    goto fail1;
+#endif
   }
 
   *ring =
