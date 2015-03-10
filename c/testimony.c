@@ -168,7 +168,8 @@ int testimony_close(testimony t) {
   return 0;
 }
 
-int testimony_get_block(testimony t, int timeout_millis, struct tpacket_block_desc** block) {
+int testimony_get_block(testimony t, int timeout_millis,
+                        struct tpacket_block_desc** block) {
   struct pollfd pfd;
   char blockidx;
   int r;
@@ -181,12 +182,18 @@ int testimony_get_block(testimony t, int timeout_millis, struct tpacket_block_de
     pfd.fd = t->sock_fd;
     pfd.events = POLLIN;
     r = poll(&pfd, 1, timeout_millis);
-    if (r < 0) { return -errno; }  // error, return negative errno.
-    if (r == 0) { return 0; }  // timed out, no block ready
+    if (r < 0) {
+      return -errno;
+    }
+    if (r == 0) {
+      return 0;  // Timed out, no block ready yet.
+    }
     // A read is ready, fall through.
   }
   r = recv(t->sock_fd, &blockidx, 1, 0);
-  if (r < 0) { return -errno; }
+  if (r < 0) {
+    return -errno;
+  }
   if (r != 1 || blockidx < 0 || blockidx >= t->block_nr) {
     return -EIO;
   }
@@ -213,12 +220,16 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
 }
 
 int testimony_block_size(testimony t) {
-  if (t->sock_fd == 0) { return -1; }
+  if (t->sock_fd == 0) {
+    return -1;
+  }
   return t->block_size;
 }
 
 int testimony_block_nr(testimony t) {
-  if (t->sock_fd == 0) { return -1; }
+  if (t->sock_fd == 0) {
+    return -1;
+  }
   return t->block_nr;
 }
 
