@@ -91,7 +91,7 @@ func (s *Socket) getNewBlocks() {
 	for {
 		b := s.blocks[s.index]
 		for !b.ready() {
-			time.Sleep(time.Millisecond)
+			time.Sleep(time.Millisecond * 10)
 		}
 		b.ref()
 		v(3, "%v got new block %v", s, b)
