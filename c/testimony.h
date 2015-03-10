@@ -22,6 +22,17 @@ extern "C" {
 #endif
 
 struct testimony_internal;
+// testimony provides a link to a local testimony server, which serves up
+// AF_PACKET packet blocks.  Usage:
+//
+//   testimony t;
+//   CHECK(testimony_init(&t, "/tmp/socketname", 0) == 0);
+//   struct tpacket_block_desc* block;
+//   CHECK(testimony_get_block(t, 1000 /* 1 sec */, &block) == 0);
+//   // use block...
+//   CHECK(testimony_return_block(t, block) == 0);
+//   // call get/return more times if you want.
+//   CHECK(testimony_close(t) == 0);
 typedef struct testimony_internal* testimony;
 
 // The following functions return 0 on success, -errno on failure.
