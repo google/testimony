@@ -38,8 +38,18 @@ struct testimony_internal;
 //   CHECK(testimony_close(t) == 0);
 typedef struct testimony_internal* testimony;
 
+typedef struct {
+  int fanout_size;
+  int fanout_num;  // -1 if not yet set.
+} testimony_connection;
+
 // Initializes a connection to the testimony server.
-int testimony_init(testimony* t, const char* socket_name, int num);
+int testimony_connect(testimony* t, const char* socket_name);
+// Requests information about the connection.  This can be called after connect
+// and before init.  All other functions should be called after init.
+void testimony_conn_info(testimony t, testimony_connection* info);
+// Initiates the connection by requesting a specific fanout number.
+int testimony_init(testimony t, int fanout_num);
 // Closes a connection to the testimony server.  t should not be reused after
 // this call.
 int testimony_close(testimony t);
@@ -87,7 +97,7 @@ int testimony_iter_close(testimony_iter iter);
 // from a tpacket3 packet header.  The returned buffer will be pkt->tp_snaplen
 // bytes long.  pkt->tp_len is the length of the original packet, and may
 // be >= tp_snaplen.
-unsigned char* testimony_packet_data(struct tpacket3_hdr* pkt);
+uint8_t* testimony_packet_data(struct tpacket3_hdr* pkt);
 // testimony_packet_nanos is the nanosecond timestamp for the given packet.
 int64_t testimony_packet_nanos(struct tpacket3_hdr* pkt);
 

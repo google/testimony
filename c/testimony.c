@@ -30,30 +30,31 @@ extern "C" {
 #endif
 
 struct testimony_internal {
+  testimony_connection conn;
   int sock_fd;
   int afpacket_fd;
-  unsigned char* ring;
+  uint8_t* ring;
   size_t block_size;
   size_t block_nr;
 };
 
 static const char kProtocolVersion = 1;
 
-static uint32_t get_be_32(unsigned char* a) {
+static uint32_t get_be_32(uint8_t* a) {
 #define LSH(x, n) (((uint32_t)x) << n)
   return LSH(a[0], 24) | LSH(a[1], 16) | LSH(a[2], 8) | a[3];
 #undef LSH
 }
-static void set_be_32(unsigned char* a, uint32_t x) {
+static void set_be_32(uint8_t* a, uint32_t x) {
   a[0] = x >> 24;
   a[1] = x >> 16;
   a[2] = x >> 8;
   a[3] = x;
 }
 static int recv_be_32(int fd, size_t* out) {
-  unsigned char msg[4];
-  unsigned char* writeto = msg;
-  unsigned char* limit = msg + 4;
+  uint8_t msg[4];
+  uint8_t* writeto = msg;
+  uint8_t* limit = msg + 4;
   int r;
   while (writeto < limit) {
     r = recv(fd, writeto, limit - writeto, 0);
@@ -66,9 +67,9 @@ static int recv_be_32(int fd, size_t* out) {
   return 0;
 }
 static int send_be_32(int fd, size_t in) {
-  unsigned char msg[4];
-  unsigned char* readfrom = msg;
-  unsigned char* limit = msg + 4;
+  uint8_t msg[4];
+  uint8_t* readfrom = msg;
+  uint8_t* limit = msg + 4;
   int r;
   set_be_32(msg, in);
   while (readfrom < limit) {
@@ -87,8 +88,8 @@ static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr
   struct msghdr message;
   struct iovec iov[1];
   struct cmsghdr* control_message = NULL;
-  unsigned char ctrl_buf[CMSG_SPACE(sizeof(int))];
-  unsigned char data[8];
+  uint8_t ctrl_buf[CMSG_SPACE(sizeof(int))];
+  uint8_t data[8];
   int r;
 
   memset(&message, 0, sizeof(struct msghdr));
@@ -124,15 +125,16 @@ static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr
   return -1;
 }
 
-int testimony_init(testimony* tp, const char* socket_name, int num) {
+int testimony_connect(testimony* tp, const char* socket_name) {
   struct sockaddr_un saddr, laddr;
   int r, err;
-  unsigned char msg;
+  uint8_t msg[5];
   testimony t = (testimony)malloc(sizeof(struct testimony_internal));
   if (t == NULL) {
     return -ENOMEM;
   }
   memset(t, 0, sizeof(*t));
+  t->conn.fanout_num = -1;
 
   saddr.sun_family = AF_UNIX;
   strncpy(saddr.sun_path, socket_name, sizeof(saddr.sun_path) - 1);
@@ -161,13 +163,29 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
   if (r < 0) {
     // fprintf(stderr, "recv\n");
     goto fail;
-  } else if (msg != kProtocolVersion) {
+  } else if (msg[0] != kProtocolVersion) {
     // fprintf(stderr, "version\n");
     errno = EPROTONOSUPPORT;
     goto fail;
   }
-  msg = num;
-  r = send(t->sock_fd, &msg, 1, 0);
+  t->conn.fanout_size = get_be_32(msg + 1);
+  *tp = t;
+  return 0;
+fail:
+  err = errno;
+  testimony_close(t);
+  return -err;
+}
+
+void testimony_conn_info(testimony t, testimony_connection* info) {
+  memcpy(info, &t->conn, sizeof(t->conn));
+}
+
+int testimony_init(testimony t, int fanout_num) {
+  uint8_t msg[4];
+  int r, err;
+  set_be_32(msg, fanout_num);
+  r = send(t->sock_fd, &msg, sizeof(msg), 0);
   if (r < 0) {
     // fprintf(stderr, "send\n");
     goto fail;
@@ -179,6 +197,7 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
     // fprintf(stderr, "recv_file_descriptor\n");
     goto fail;
   }
+  t->conn.fanout_num = fanout_num;
 
   // printf("Got AF_PACKET FD: %d (%d/%d)\n", t->afpacket_fd, t->block_size,
          //t->block_nr);
@@ -190,8 +209,6 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
     errno = EINVAL;
     goto fail;
   }
-  printf("Got ring: %p\n", t->ring);
-  *tp = t;
   return 0;
 
 fail:
@@ -275,7 +292,7 @@ int testimony_block_nr(testimony t) {
 
 struct testimony_iter_internal {
   struct tpacket_block_desc* block;
-  unsigned char* pkt;
+  uint8_t* pkt;
   int left;
 };
 
@@ -307,7 +324,7 @@ struct tpacket3_hdr* testimony_iter_next(testimony_iter iter) {
   if (iter->pkt) {
     iter->pkt += ((struct tpacket3_hdr*)iter->pkt)->tp_next_offset;
   } else {
-    iter->pkt = (unsigned char*)iter->block
+    iter->pkt = (uint8_t*)iter->block
         + iter->block->hdr.bh1.offset_to_first_pkt;
   }
   return (struct tpacket3_hdr*)iter->pkt;
@@ -318,8 +335,8 @@ int testimony_iter_close(testimony_iter iter) {
   return 0;
 }
 
-unsigned char* testimony_packet_data(struct tpacket3_hdr* pkt) {
-  return (unsigned char*)pkt + pkt->tp_mac;
+uint8_t* testimony_packet_data(struct tpacket3_hdr* pkt) {
+  return (uint8_t*)pkt + pkt->tp_mac;
 }
 int64_t testimony_packet_nanos(struct tpacket3_hdr* pkt) {
   return (int64_t)pkt->tp_sec * 1000000000LL + pkt->tp_nsec;

@@ -67,21 +67,22 @@ connections and passing memory regions back and forth:
     SERVER                                              CLIENT
     ------                                              ------
              <-- initial connection ---
-             --- version byte (1) --->
-             <-- fanout number (1-FanoutSize) ---
+             --- version byte (1 byte == 1) --->
+             --- fanout size (4BE) -->
+             <-- fanout number [0-FanoutSize) (4BE) ---
              --- socket FD, block size, num blocks -->
 
            .. At this point, the client is connected. ..
            .. All other communication is one of the   ..
            .. following 2 possibilities:              ..
 
-             --- block index for client (4 bytes BE) -->
-             <-- block index to return (4 bytes BE) ---
+             --- block index for client (4BE) -->
+             <-- block index to return (4BE) ---
 
-Most communication is 4-byte "packets".  The one excepion is the message
-that sends the socket FD from server to client.  That contains the FD itself, as
-well as 8 bytes, representing the block size and number of blocks as big-endian
-uint32.
+Most communication is 4-byte "packets" (4BE above means 4 bytes, big endian).
+Pne excepion is the message that sends the socket FD from server to client.
+That contains the FD itself, as well as 8 bytes, representing the block size
+and number of blocks both 4BE as well.
 
 Once communication is established, server and client simply exchange block
 indexes.  The server sends a block index to the client when that block is

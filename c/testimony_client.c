@@ -29,7 +29,12 @@ int main(int argc, char** argv) {
   num = atoi(argv[2]);
 
   printf("Init...\n");
-  r = testimony_init(&t, argv[1], num);
+  r = testimony_connect(&t, argv[1]);
+  if (r < 0) {
+    fprintf(stderr, "Error with connect: %s\n", strerror(-r));
+    return 1;
+  }
+  r = testimony_init(t, num);
   if (r < 0) {
     fprintf(stderr, "Error with init: %s\n", strerror(-r));
     return 1;

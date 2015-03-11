@@ -103,13 +103,16 @@ func Connect(socketname string, num int) (*Conn, error) {
 	if err == nil {
 		return nil, fmt.Errorf("error connecting: %v", err)
 	}
-	var version [1]byte
-	if n, err := t.c.Read(version[:]); err != nil || n != 1 {
-		return nil, fmt.Errorf("error reading version byte: %v", err)
-	} else if version[0] != protocolVersion {
-		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, version[0])
+	var initial [5]byte
+	if n, err := t.c.Read(initial[:]); err != nil || n != len(initial) {
+		return nil, fmt.Errorf("error reading initial byte: %v", err)
+	} else if initial[0] != protocolVersion {
+		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, initial[0])
 	}
-	if n, err := t.c.Write([]byte{byte(num)}); err != nil || n != 1 {
+  // TODO:  Parse fanout size, allow client to chose fanout number based on it.
+  var fanoutNum [4]byte
+  binary.BigEndian.PutUint32(fanoutNum[:], uint32(num))
+  if _, err := t.c.Write(fanoutNum[:]); err != nil {
 		return nil, fmt.Errorf("error writing initial request: %v", err)
 	}
 	var msg [8]byte
