@@ -39,8 +39,12 @@ struct testimony_internal;
 typedef struct testimony_internal* testimony;
 
 typedef struct {
-  int fanout_size;  // Filled in by server
-  int fanout_index;  // Settable by client
+  // Filled in by server, shouldn't be modified by client:
+  int fanout_size;    // set by testimony_connect
+  size_t block_size;  // set by testimony_init
+  size_t block_nr;    // set by testimony_init
+  // Settable by client to modify behavior of testimony_init:
+  int fanout_index;
 } testimony_connection;
 
 // Initializes a connection to the testimony server.
@@ -49,6 +53,8 @@ int testimony_connect(testimony* t, const char* socket_name);
 // and before init.  All other functions should be called after init.
 // Modifications to the returned data will modify the behavior of init.
 testimony_connection* testimony_conn(testimony t);
+// Returns a human-readable error message related to the last issue.
+char* testimony_error(testimony t);
 // Initiates block reads.  The behavior of this function will change
 // based on modifications the client has made to testimony_conn(t).
 int testimony_init(testimony t);
@@ -61,10 +67,6 @@ int testimony_close(testimony t);
 int testimony_get_block(testimony t, int timeout_millis, struct tpacket_block_desc** block);
 // Returns a processed block of packets back to testimony.
 int testimony_return_block(testimony t, struct tpacket_block_desc* block);
-// Returns the size of an individual block, in bytes.
-int testimony_block_size(testimony t);
-// Returns the number of blocks.
-int testimony_block_nr(testimony t);
 
 struct testimony_iter_internal;
 // testimony_iter provides an easy method for iterating over packets
