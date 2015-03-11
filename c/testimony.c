@@ -134,7 +134,6 @@ int testimony_connect(testimony* tp, const char* socket_name) {
     return -ENOMEM;
   }
   memset(t, 0, sizeof(*t));
-  t->conn.fanout_num = -1;
 
   saddr.sun_family = AF_UNIX;
   strncpy(saddr.sun_path, socket_name, sizeof(saddr.sun_path) - 1);
@@ -177,14 +176,14 @@ fail:
   return -err;
 }
 
-void testimony_conn_info(testimony t, testimony_connection* info) {
-  memcpy(info, &t->conn, sizeof(t->conn));
+testimony_connection* testimony_conn(testimony t) {
+  return &t->conn;
 }
 
-int testimony_init(testimony t, int fanout_num) {
+int testimony_init(testimony t) {
   uint8_t msg[4];
   int r, err;
-  set_be_32(msg, fanout_num);
+  set_be_32(msg, t->conn.fanout_index);
   r = send(t->sock_fd, &msg, sizeof(msg), 0);
   if (r < 0) {
     // fprintf(stderr, "send\n");
@@ -197,7 +196,6 @@ int testimony_init(testimony t, int fanout_num) {
     // fprintf(stderr, "recv_file_descriptor\n");
     goto fail;
   }
-  t->conn.fanout_num = fanout_num;
 
   // printf("Got AF_PACKET FD: %d (%d/%d)\n", t->afpacket_fd, t->block_size,
          //t->block_nr);

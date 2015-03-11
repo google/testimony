@@ -20,13 +20,11 @@
 int main(int argc, char** argv) {
   int r, i;
   struct tpacket_block_desc* block;
-  int num;
   testimony t;
 
-  if (argc != 3) {
-    fprintf(stderr, "Usage: %s <socket> <num>\n", argv[0]);
+  if (argc != 2) {
+    fprintf(stderr, "Usage: %s <socket>\n", argv[0]);
   }
-  num = atoi(argv[2]);
 
   printf("Init...\n");
   r = testimony_connect(&t, argv[1]);
@@ -34,7 +32,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Error with connect: %s\n", strerror(-r));
     return 1;
   }
-  r = testimony_init(t, num);
+  r = testimony_init(t);
   if (r < 0) {
     fprintf(stderr, "Error with init: %s\n", strerror(-r));
     return 1;

@@ -39,17 +39,19 @@ struct testimony_internal;
 typedef struct testimony_internal* testimony;
 
 typedef struct {
-  int fanout_size;
-  int fanout_num;  // -1 if not yet set.
+  int fanout_size;  // Filled in by server
+  int fanout_index;  // Settable by client
 } testimony_connection;
 
 // Initializes a connection to the testimony server.
 int testimony_connect(testimony* t, const char* socket_name);
 // Requests information about the connection.  This can be called after connect
 // and before init.  All other functions should be called after init.
-void testimony_conn_info(testimony t, testimony_connection* info);
-// Initiates the connection by requesting a specific fanout number.
-int testimony_init(testimony t, int fanout_num);
+// Modifications to the returned data will modify the behavior of init.
+testimony_connection* testimony_conn(testimony t);
+// Initiates block reads.  The behavior of this function will change
+// based on modifications the client has made to testimony_conn(t).
+int testimony_init(testimony t);
 // Closes a connection to the testimony server.  t should not be reused after
 // this call.
 int testimony_close(testimony t);
