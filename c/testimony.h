@@ -16,10 +16,13 @@
 #define __TESTIMONY_H__
 
 #include <linux/if_packet.h>
+#include <stdint.h>  // int64_t
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// All functions that return an int return 0 on success, -errno on failure.
 
 struct testimony_internal;
 // testimony provides a link to a local testimony server, which serves up
@@ -34,8 +37,6 @@ struct testimony_internal;
 //   // call get/return more times if you want.
 //   CHECK(testimony_close(t) == 0);
 typedef struct testimony_internal* testimony;
-
-// The following functions return 0 on success, -errno on failure.
 
 // Initializes a connection to the testimony server.
 int testimony_init(testimony* t, const char* socket_name, int num);
@@ -52,6 +53,43 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block);
 int testimony_block_size(testimony t);
 // Returns the number of blocks.
 int testimony_block_nr(testimony t);
+
+struct testimony_iter_internal;
+// testimony_iter provides an easy method for iterating over packets
+// in a tpacket3 block.
+//
+// Usage:
+//   testimony_iter iter;
+//   CHECK(testimony_iter_init(&iter) == 0);
+//   while (...) {
+//     struct tpacket_block_desc* block = get_block_somehow();
+//     CHECK(testimony_iter_start(iter, block) == 0);
+//     struct tpacket3_hdr* packet;
+//     while ((packet = testimony_iter_next(iter) != NULL) {
+//       handle_packet(packet);
+//     }
+//   }
+//   CHECK(testimony_iter_close(iter));
+//
+typedef struct testimony_iter_internal* testimony_iter;
+
+// Initiate iterator.  Returns 0 on success, -errno on failure.
+int testimony_iter_init(testimony_iter* iter);
+// Reset iterator to iterate over a new block.
+int testimony_iter_reset(
+    testimony_iter iter, struct tpacket_block_desc* block);
+// Return the next packet in the block, or NULL if we have no more packets.
+struct tpacket3_hdr* testimony_iter_next(testimony_iter iter);
+// Clean up the iterator.  Use of iter after this call will break.
+int testimony_iter_close(testimony_iter iter);
+
+// testimony_packet_data is a helper function to extract the packet data
+// from a tpacket3 packet header.  The returned buffer will be pkt->tp_snaplen
+// bytes long.  pkt->tp_len is the length of the original packet, and may
+// be >= tp_snaplen.
+unsigned char* testimony_packet_data(struct tpacket3_hdr* pkt);
+// testimony_packet_nanos is the nanosecond timestamp for the given packet.
+int64_t testimony_packet_nanos(struct tpacket3_hdr* pkt);
 
 #ifdef __cplusplus
 }

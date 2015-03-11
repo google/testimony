@@ -32,7 +32,7 @@ extern "C" {
 struct testimony_internal {
   int sock_fd;
   int afpacket_fd;
-  char* ring;
+  unsigned char* ring;
   size_t block_size;
   size_t block_nr;
 };
@@ -51,9 +51,9 @@ static void set_be_32(unsigned char* a, uint32_t x) {
   a[3] = x;
 }
 static int recv_be_32(int fd, size_t* out) {
-  char msg[4];
-  char* writeto = msg;
-  char* limit = msg + 4;
+  unsigned char msg[4];
+  unsigned char* writeto = msg;
+  unsigned char* limit = msg + 4;
   int r;
   while (writeto < limit) {
     r = recv(fd, writeto, limit - writeto, 0);
@@ -66,9 +66,9 @@ static int recv_be_32(int fd, size_t* out) {
   return 0;
 }
 static int send_be_32(int fd, size_t in) {
-  char msg[4];
-  char* readfrom = msg;
-  char* limit = msg + 4;
+  unsigned char msg[4];
+  unsigned char* readfrom = msg;
+  unsigned char* limit = msg + 4;
   int r;
   set_be_32(msg, in);
   while (readfrom < limit) {
@@ -87,8 +87,8 @@ static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr
   struct msghdr message;
   struct iovec iov[1];
   struct cmsghdr* control_message = NULL;
-  char ctrl_buf[CMSG_SPACE(sizeof(int))];
-  char data[8];
+  unsigned char ctrl_buf[CMSG_SPACE(sizeof(int))];
+  unsigned char data[8];
   int r;
 
   memset(&message, 0, sizeof(struct msghdr));
@@ -127,7 +127,7 @@ static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr
 int testimony_init(testimony* tp, const char* socket_name, int num) {
   struct sockaddr_un saddr, laddr;
   int r, err;
-  char msg;
+  unsigned char msg;
   testimony t = (testimony)malloc(sizeof(struct testimony_internal));
   if (t == NULL) {
     return -ENOMEM;
@@ -140,7 +140,7 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
 
   t->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (t->sock_fd < 0) {
-    fprintf(stderr, "socket\n");
+    // fprintf(stderr, "socket\n");
     goto fail;
   }
   // TODO(gconnell):  Don't use tmpnam here... figure out how to use mkstemp.
@@ -148,35 +148,35 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
   strcpy(laddr.sun_path, tmpnam(NULL));
   r = bind(t->sock_fd, (struct sockaddr*)&laddr, sizeof(laddr));
   if (r < 0) {
-    fprintf(stderr, "bind\n");
+    // fprintf(stderr, "bind\n");
     goto fail;
   }
 
   r = connect(t->sock_fd, (struct sockaddr*)&saddr, sizeof(saddr));
   if (r < 0) {
-    fprintf(stderr, "connect\n");
+    // fprintf(stderr, "connect\n");
     goto fail;
   }
   r = recv(t->sock_fd, &msg, sizeof(msg), 0);
   if (r < 0) {
-    fprintf(stderr, "recv\n");
+    // fprintf(stderr, "recv\n");
     goto fail;
   } else if (msg != kProtocolVersion) {
-    fprintf(stderr, "version\n");
+    // fprintf(stderr, "version\n");
     errno = EPROTONOSUPPORT;
     goto fail;
   }
   msg = num;
   r = send(t->sock_fd, &msg, 1, 0);
   if (r < 0) {
-    fprintf(stderr, "send\n");
+    // fprintf(stderr, "send\n");
     goto fail;
   }
 
   t->afpacket_fd =
       recv_file_descriptor(t->sock_fd, &t->block_size, &t->block_nr);
   if (t->afpacket_fd < 0) {
-    fprintf(stderr, "recv_file_descriptor\n");
+    // fprintf(stderr, "recv_file_descriptor\n");
     goto fail;
   }
 
@@ -186,7 +186,7 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
                  MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, t->afpacket_fd, 0);
   if (t->ring == MAP_FAILED) {
     t->ring = 0;
-    fprintf(stderr, "mmap\n");
+    // fprintf(stderr, "mmap\n");
     errno = EINVAL;
     goto fail;
   }
@@ -236,7 +236,7 @@ int testimony_get_block(testimony t, int timeout_millis,
     return -errno;
   }
   if (blockidx >= t->block_nr) {
-    fprintf(stderr, "%d >= %d\n", blockidx,t->block_nr);
+    // fprintf(stderr, "%d >= %d\n", blockidx,t->block_nr);
     return -EIO;
   }
   *block =
@@ -271,6 +271,58 @@ int testimony_block_nr(testimony t) {
     return -1;
   }
   return t->block_nr;
+}
+
+struct testimony_iter_internal {
+  struct tpacket_block_desc* block;
+  unsigned char* pkt;
+  int left;
+};
+
+int testimony_iter_init(testimony_iter* iter) {
+  *iter = (testimony_iter)malloc(sizeof(struct testimony_iter_internal));
+  if (*iter == NULL) {
+    return -ENOMEM;
+  }
+  memset(iter, 0, sizeof(*iter));
+  return 0;
+}
+
+int testimony_iter_reset(
+    testimony_iter iter, struct tpacket_block_desc* block) {
+  if (block->version != 3) {
+    return -EPROTONOSUPPORT;
+  }
+  iter->block = block;
+  iter->left = block->hdr.bh1.num_pkts;
+  iter->pkt = NULL;
+  return 0;
+}
+
+struct tpacket3_hdr* testimony_iter_next(testimony_iter iter) {
+  if (!iter->left) {
+    return NULL;
+  }
+  iter->left--;
+  if (iter->pkt) {
+    iter->pkt += ((struct tpacket3_hdr*)iter->pkt)->tp_next_offset;
+  } else {
+    iter->pkt = (unsigned char*)iter->block
+        + iter->block->hdr.bh1.offset_to_first_pkt;
+  }
+  return (struct tpacket3_hdr*)iter->pkt;
+}
+
+int testimony_iter_close(testimony_iter iter) {
+  free(iter);
+  return 0;
+}
+
+unsigned char* testimony_packet_data(struct tpacket3_hdr* pkt) {
+  return (unsigned char*)pkt + pkt->tp_mac;
+}
+int64_t testimony_packet_nanos(struct tpacket3_hdr* pkt) {
+  return (int64_t)pkt->tp_sec * 1000000000LL + pkt->tp_nsec;
 }
 
 #ifdef __cplusplus
