@@ -180,8 +180,8 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
     goto fail;
   }
 
-  printf("Got AF_PACKET FD: %d (%d/%d)\n", t->afpacket_fd, t->block_size,
-         t->block_nr);
+  // printf("Got AF_PACKET FD: %d (%d/%d)\n", t->afpacket_fd, t->block_size,
+         //t->block_nr);
   t->ring = mmap(NULL, t->block_size * t->block_nr, PROT_READ,
                  MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, t->afpacket_fd, 0);
   if (t->ring == MAP_FAILED) {
@@ -284,13 +284,13 @@ int testimony_iter_init(testimony_iter* iter) {
   if (*iter == NULL) {
     return -ENOMEM;
   }
-  memset(iter, 0, sizeof(*iter));
+  memset(*iter, 0, sizeof(struct testimony_iter_internal));
   return 0;
 }
 
 int testimony_iter_reset(
     testimony_iter iter, struct tpacket_block_desc* block) {
-  if (block->version != 3) {
+  if (block->version != TPACKET_V3) {
     return -EPROTONOSUPPORT;
   }
   iter->block = block;
