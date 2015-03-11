@@ -15,8 +15,9 @@
 #ifndef __TESTIMONY_H__
 #define __TESTIMONY_H__
 
-#include <linux/if_packet.h>
-#include <stdint.h>  // int64_t
+#include <linux/if_packet.h>  // tpacket_block_desc, tpacket3_hdr
+#include <stdint.h>  // int64_t, uint8_t
+#include <stddef.h>  // size_t
 
 #ifdef __cplusplus
 extern "C" {

@@ -69,8 +69,7 @@ static int recv_be_32(int fd, size_t* out) {
 }
 #define TERR(msg, ...) do { \
   int err = errno; \
-  snprintf(t->errbuf, TESTIMONY_ERRBUF_SIZE, "%s: " msg, \
-           __FUNCTION__, ##__VA_ARGS__); \
+  snprintf(t->errbuf, TESTIMONY_ERRBUF_SIZE, msg, ##__VA_ARGS__); \
   errno = err; \
 } while (0)
 
@@ -287,6 +286,10 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
     return -errno;
   }
   return 0;
+}
+
+char* testimony_error(testimony t) {
+  return t->errbuf;
 }
 
 struct testimony_iter_internal {

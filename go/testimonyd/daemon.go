@@ -130,7 +130,7 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 		return
 	}
   var fanoutMsg [4]byte
-	if n, err := c.Read(fanoutMsg[:]); n != 1 || err != nil {
+	if n, err := c.Read(fanoutMsg[:]); n != len(fanoutMsg) || err != nil {
 		log.Printf("new conn failed to read conf: %v", err)
 		return
 	}
