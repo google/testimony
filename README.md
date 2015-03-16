@@ -34,12 +34,10 @@ these configuration options:
      where/how to communicate with `testimonyd`.
 *   **Interface:**  Name of the interface to sniff packets on, e.g. `eth0`, `em1`,
      etc.
-*   **BlockSizePowerOf2:**  AF_PACKET provides packets to user-space by filling up
+*   **BlockSize:**  AF_PACKET provides packets to user-space by filling up
      memory blocks of a specific size, until it either can't fit the next packet
      into the current block or a timeout is reached.  The larger the block, the
-     more packets can be passed to the user at once.  We allow blocks to be any
-     power-of-2 size.  If `BlockSizePowerOf2` is 20, blocks will be `1<<20`
-     bytes (1MB) each.
+     more packets can be passed to the user at once.  BlockSize is in bytes.
 *   **NumBlocks:**  Number of blocks to allocate in memory.  `NumBlocks *
      BlockSize` is the total size in memory of the AF_PACKET packet memory
      region for a single fanout.
@@ -57,7 +55,9 @@ these configuration options:
 *   **User:** This socket will be owned by the given user, mode `0600`.  This
      allows root to provide different sockets with different capabilities to
      specific users.
-*   **Filter:** BPF filter for this socket.
+*   **Filter:** BPF filter for this socket.  If this is set, testimony will
+     guarantee that the socket passed to child processes has this filter locked
+     in such a way that clients cannot remove it.
 
 ### Wire Protocol ###
 
