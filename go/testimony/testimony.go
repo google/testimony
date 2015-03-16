@@ -112,10 +112,10 @@ func Connect(socketname string, num int) (*Conn, error) {
 	_ = int(binary.BigEndian.Uint32(initial[1:]))
 	t.blockSize = int(binary.BigEndian.Uint32(initial[5:]))
 	t.numBlocks = int(binary.BigEndian.Uint32(initial[9:]))
-  // TODO:  Parse fanout size, allow client to chose fanout number based on it.
-  var fanoutNum [4]byte
-  binary.BigEndian.PutUint32(fanoutNum[:], uint32(num))
-  if _, err := t.c.Write(fanoutNum[:]); err != nil {
+	// TODO:  Parse fanout size, allow client to chose fanout number based on it.
+	var fanoutNum [4]byte
+	binary.BigEndian.PutUint32(fanoutNum[:], uint32(num))
+	if _, err := t.c.Write(fanoutNum[:]); err != nil {
 		return nil, fmt.Errorf("error writing initial request: %v", err)
 	}
 	var msg [1]byte

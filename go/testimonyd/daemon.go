@@ -123,28 +123,28 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 		}
 	}()
 	v(1, "Received new connection %v", c.RemoteAddr())
-  var buf [13]byte
-  buf[0] = protocolVersion
-  binary.BigEndian.PutUint32(buf[1:], uint32(len(socks)))
-	binary.BigEndian.PutUint32(msg[5:], uint32(socks[0].conf.BlockSize))
-	binary.BigEndian.PutUint32(msg[9:], uint32(socks[0].conf.NumBlocks))
+	var buf [13]byte
+	buf[0] = protocolVersion
+	binary.BigEndian.PutUint32(buf[1:], uint32(len(socks)))
+	binary.BigEndian.PutUint32(buf[5:], uint32(socks[0].conf.BlockSize))
+	binary.BigEndian.PutUint32(buf[9:], uint32(socks[0].conf.NumBlocks))
 	if _, err := c.Write(buf[:]); err != nil {
 		log.Printf("new conn failed to write version: %v", err)
 		return
 	}
-  var fanoutMsg [4]byte
+	var fanoutMsg [4]byte
 	if n, err := c.Read(fanoutMsg[:]); n != len(fanoutMsg) || err != nil {
 		log.Printf("new conn failed to read conf: %v", err)
 		return
 	}
-  idx := int(binary.BigEndian.Uint32(fanoutMsg[:]))
+	idx := int(binary.BigEndian.Uint32(fanoutMsg[:]))
 	if idx < 0 || idx >= len(socks) {
 		log.Printf("new conn invalid index %v", idx)
 		return
 	}
 	sock := socks[idx]
 	fdMsg := syscall.UnixRights(sock.fd)
-	var msg [1]byte  // dummy byte
+	var msg [1]byte // dummy byte
 	n, n2, err := c.WriteMsgUnix(
 		msg[:], fdMsg, nil)
 	if err != nil || n != len(msg) || n2 != len(fdMsg) {
