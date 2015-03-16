@@ -123,8 +123,11 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 		}
 	}()
 	v(1, "Received new connection %v", c.RemoteAddr())
-	buf := [...]byte{protocolVersion, 0, 0, 0, 0}
+  var buf [13]byte
+  buf[0] = protocolVersion
   binary.BigEndian.PutUint32(buf[1:], uint32(len(socks)))
+	binary.BigEndian.PutUint32(msg[5:], uint32(socks[0].conf.BlockSize))
+	binary.BigEndian.PutUint32(msg[9:], uint32(socks[0].conf.NumBlocks))
 	if _, err := c.Write(buf[:]); err != nil {
 		log.Printf("new conn failed to write version: %v", err)
 		return
@@ -141,9 +144,7 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 	}
 	sock := socks[idx]
 	fdMsg := syscall.UnixRights(sock.fd)
-	var msg [8]byte
-	binary.BigEndian.PutUint32(msg[:], uint32(sock.conf.BlockSize))
-	binary.BigEndian.PutUint32(msg[4:], uint32(sock.conf.NumBlocks))
+	var msg [1]byte  // dummy byte
 	n, n2, err := c.WriteMsgUnix(
 		msg[:], fdMsg, nil)
 	if err != nil || n != len(msg) || n2 != len(fdMsg) {

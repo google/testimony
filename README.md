@@ -69,12 +69,14 @@ connections and passing memory regions back and forth:
              <-- initial connection ---
              --- version byte (1 byte == 1) --->
              --- fanout size (4BE) -->
+             --- block size (4BE) -->
+             --- number of blocks (4BE) -->
              <-- fanout number [0-FanoutSize) (4BE) ---
-             --- socket FD, block size, num blocks -->
+             --- socket FD, + 1 dummy byte (ignored) -->
 
-           .. At this point, the client is connected. ..
-           .. All other communication is one of the   ..
-           .. following 2 possibilities:              ..
+              At this point, the client is connected.
+              All other communication is one of the
+              following 2 possibilities:
 
              --- block index for client (4BE) -->
              <-- block index to return (4BE) ---

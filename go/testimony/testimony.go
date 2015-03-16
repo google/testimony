@@ -103,19 +103,22 @@ func Connect(socketname string, num int) (*Conn, error) {
 	if err == nil {
 		return nil, fmt.Errorf("error connecting: %v", err)
 	}
-	var initial [5]byte
+	var initial [13]byte
 	if n, err := t.c.Read(initial[:]); err != nil || n != len(initial) {
 		return nil, fmt.Errorf("error reading initial byte: %v", err)
 	} else if initial[0] != protocolVersion {
 		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, initial[0])
 	}
+	_ = int(binary.BigEndian.Uint32(initial[1:]))
+	t.blockSize = int(binary.BigEndian.Uint32(initial[5:]))
+	t.numBlocks = int(binary.BigEndian.Uint32(initial[9:]))
   // TODO:  Parse fanout size, allow client to chose fanout number based on it.
   var fanoutNum [4]byte
   binary.BigEndian.PutUint32(fanoutNum[:], uint32(num))
   if _, err := t.c.Write(fanoutNum[:]); err != nil {
 		return nil, fmt.Errorf("error writing initial request: %v", err)
 	}
-	var msg [8]byte
+	var msg [1]byte
 	var oob [1024]byte
 	n, n2, _, _, err := t.c.ReadMsgUnix(msg[:], oob[:])
 	if err != nil {
@@ -136,8 +139,6 @@ func Connect(socketname string, num int) (*Conn, error) {
 	} else {
 		t.fd = fds[0]
 	}
-	t.blockSize = int(binary.BigEndian.Uint32(msg[:]))
-	t.numBlocks = int(binary.BigEndian.Uint32(msg[4:]))
 	if t.ring, err = syscall.Mmap(t.fd, 0, t.blockSize*t.numBlocks, syscall.PROT_READ, syscall.MAP_SHARED|syscall.MAP_LOCKED|syscall.MAP_NORESERVE); err != nil {
 		return nil, fmt.Errorf("mmap failed: %v", err)
 	}
