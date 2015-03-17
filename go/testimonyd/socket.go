@@ -169,7 +169,12 @@ func (c *conn) run() {
 				log.Printf("%v returned %v that was not outstanding", c, b)
 				return
 			}
-			v(4, "%v returned %v after %v", c, b, time.Since(t))
+			duration := time.Since(t)
+			level := 4
+			if duration > time.Second / 4 {
+				level = 1
+			}
+			v(level, "%v returned %v after %v", c, b, duration)
 			b.unref()
 			select {
 			case <-writeDone:
