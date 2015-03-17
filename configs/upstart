@@ -12,25 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-all: testimony testimonyd
+# testimony - cross-process sharing of AF_PACKET data
 
-clean: testimony_clean testimonyd_clean
+description "sharing packets in memory"
 
-install: testimonyd_install
+start on runlevel [2345]
+stop on runlevel [!2345]
 
-.PHONY: testimony testimonyd
+respawn
+respawn limit 1 300  # At most once per 5 minutes
 
-testimony:
-	$(MAKE) -C testimony
-
-testimony_clean:
-	$(MAKE) -C testimony clean
-
-testimonyd:
-	$(MAKE) -C testimonyd
-
-testimonyd_clean:
-	$(MAKE) -C testimonyd clean
-
-testimonyd_install:
-	$(MAKE) -C testimonyd install
+exec /usr/sbin/testimonyd

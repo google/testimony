@@ -29,31 +29,33 @@
 extern "C" {
 #endif
 
+#define TESTIMONY_ERRBUF_SIZE 256
+
 struct testimony_internal {
+  testimony_connection conn;
   int sock_fd;
   int afpacket_fd;
-  char* ring;
-  size_t block_size;
-  size_t block_nr;
+  uint8_t* ring;
+  char errbuf[TESTIMONY_ERRBUF_SIZE];
 };
 
 static const char kProtocolVersion = 1;
 
-static uint32_t get_be_32(unsigned char* a) {
+static uint32_t get_be_32(uint8_t* a) {
 #define LSH(x, n) (((uint32_t)x) << n)
   return LSH(a[0], 24) | LSH(a[1], 16) | LSH(a[2], 8) | a[3];
 #undef LSH
 }
-static void set_be_32(unsigned char* a, uint32_t x) {
+static void set_be_32(uint8_t* a, uint32_t x) {
   a[0] = x >> 24;
   a[1] = x >> 16;
   a[2] = x >> 8;
   a[3] = x;
 }
-static int recv_be_32(int fd, size_t* out) {
-  char msg[4];
-  char* writeto = msg;
-  char* limit = msg + 4;
+static int recv_be_32(int fd, uint32_t* out) {
+  uint8_t msg[4];
+  uint8_t* writeto = msg;
+  uint8_t* limit = msg + 4;
   int r;
   while (writeto < limit) {
     r = recv(fd, writeto, limit - writeto, 0);
@@ -65,10 +67,17 @@ static int recv_be_32(int fd, size_t* out) {
   *out = get_be_32(msg);
   return 0;
 }
+#define TERR(msg, ...)                                              \
+  do {                                                              \
+    int err = errno;                                                \
+    snprintf(t->errbuf, TESTIMONY_ERRBUF_SIZE, msg, ##__VA_ARGS__); \
+    errno = err;                                                    \
+  } while (0)
+
 static int send_be_32(int fd, size_t in) {
-  char msg[4];
-  char* readfrom = msg;
-  char* limit = msg + 4;
+  uint8_t msg[4];
+  uint8_t* readfrom = msg;
+  uint8_t* limit = msg + 4;
   int r;
   set_be_32(msg, in);
   while (readfrom < limit) {
@@ -83,12 +92,12 @@ static int send_be_32(int fd, size_t in) {
 
 // With much thanks to
 // http://blog.varunajayasiri.com/passing-file-descriptors-between-processes-using-sendmsg-and-recvmsg
-static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr) {
+static int recv_file_descriptor(int socket) {
   struct msghdr message;
   struct iovec iov[1];
   struct cmsghdr* control_message = NULL;
-  char ctrl_buf[CMSG_SPACE(sizeof(int))];
-  char data[8];
+  uint8_t ctrl_buf[CMSG_SPACE(sizeof(int))];
+  uint8_t data[1];
   int r;
 
   memset(&message, 0, sizeof(struct msghdr));
@@ -109,8 +118,6 @@ static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr
   if (r != sizeof(data)) {
     return -1;
   }
-  *block_size = get_be_32(data);
-  *block_nr = get_be_32(data + 4);
 
   /* Iterate through header to find if there is a file descriptor */
   for (control_message = CMSG_FIRSTHDR(&message); control_message != NULL;
@@ -124,10 +131,11 @@ static int recv_file_descriptor(int socket, size_t* block_size, size_t* block_nr
   return -1;
 }
 
-int testimony_init(testimony* tp, const char* socket_name, int num) {
+int testimony_connect(testimony* tp, const char* socket_name) {
   struct sockaddr_un saddr, laddr;
   int r, err;
-  char msg;
+  uint8_t version;
+  uint32_t msg;
   testimony t = (testimony)malloc(sizeof(struct testimony_internal));
   if (t == NULL) {
     return -ENOMEM;
@@ -140,7 +148,7 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
 
   t->sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (t->sock_fd < 0) {
-    fprintf(stderr, "socket\n");
+    TERR("socket creation failed");
     goto fail;
   }
   // TODO(gconnell):  Don't use tmpnam here... figure out how to use mkstemp.
@@ -148,50 +156,80 @@ int testimony_init(testimony* tp, const char* socket_name, int num) {
   strcpy(laddr.sun_path, tmpnam(NULL));
   r = bind(t->sock_fd, (struct sockaddr*)&laddr, sizeof(laddr));
   if (r < 0) {
-    fprintf(stderr, "bind\n");
+    TERR("bind to '%s' failed", laddr.sun_path);
     goto fail;
   }
 
   r = connect(t->sock_fd, (struct sockaddr*)&saddr, sizeof(saddr));
   if (r < 0) {
-    fprintf(stderr, "connect\n");
+    TERR("connect to '%s' failed", saddr.sun_path);
     goto fail;
   }
-  r = recv(t->sock_fd, &msg, sizeof(msg), 0);
+  r = recv(t->sock_fd, &version, 1, 0);
   if (r < 0) {
-    fprintf(stderr, "recv\n");
+    TERR("recv of protocol version failed");
     goto fail;
-  } else if (msg != kProtocolVersion) {
-    fprintf(stderr, "version\n");
+  } else if (version != kProtocolVersion) {
+    TERR("received unsupported protocol version %d", version);
     errno = EPROTONOSUPPORT;
     goto fail;
   }
-  msg = num;
-  r = send(t->sock_fd, &msg, 1, 0);
+  r = recv_be_32(t->sock_fd, &msg);
   if (r < 0) {
-    fprintf(stderr, "send\n");
+    TERR("did not receive fanout size");
+    goto fail;
+  }
+  t->conn.fanout_size = msg;
+  r = recv_be_32(t->sock_fd, &msg);
+  if (r < 0) {
+    TERR("did not receive block size");
+    goto fail;
+  }
+  t->conn.block_size = msg;
+  r = recv_be_32(t->sock_fd, &msg);
+  if (r < 0) {
+    TERR("did not receive number of blocks");
+    goto fail;
+  }
+  t->conn.block_nr = msg;
+  *tp = t;
+  return 0;
+fail:
+  err = errno;
+  testimony_close(t);
+  return -err;
+}
+
+testimony_connection* testimony_conn(testimony t) { return &t->conn; }
+
+int testimony_init(testimony t) {
+  uint8_t msg[4];
+  int r, err;
+  if (t->ring) {
+    TERR("testimony has already been initiated");
+    return -EINVAL;
+  }
+  set_be_32(msg, t->conn.fanout_index);
+  r = send(t->sock_fd, &msg, sizeof(msg), 0);
+  if (r < 0) {
+    TERR("send of fanout index failed");
     goto fail;
   }
 
-  t->afpacket_fd =
-      recv_file_descriptor(t->sock_fd, &t->block_size, &t->block_nr);
+  t->afpacket_fd = recv_file_descriptor(t->sock_fd);
   if (t->afpacket_fd < 0) {
-    fprintf(stderr, "recv_file_descriptor\n");
+    TERR("recv of file descriptor failed");
     goto fail;
   }
 
-  printf("Got AF_PACKET FD: %d (%d/%d)\n", t->afpacket_fd, t->block_size,
-         t->block_nr);
-  t->ring = mmap(NULL, t->block_size * t->block_nr, PROT_READ,
+  t->ring = mmap(NULL, t->conn.block_size * t->conn.block_nr, PROT_READ,
                  MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, t->afpacket_fd, 0);
   if (t->ring == MAP_FAILED) {
     t->ring = 0;
-    fprintf(stderr, "mmap\n");
+    TERR("local mmap of file descriptor failed");
     errno = EINVAL;
     goto fail;
   }
-  printf("Got ring: %p\n", t->ring);
-  *tp = t;
   return 0;
 
 fail:
@@ -202,7 +240,8 @@ fail:
 
 int testimony_close(testimony t) {
   if (t->ring != 0) {
-    if (munmap(t->ring, t->block_nr * t->block_size) < 0) return -errno;
+    if (munmap(t->ring, t->conn.block_nr * t->conn.block_size) < 0)
+      return -errno;
   }
   if (close(t->sock_fd) < 0) return -errno;
   free(t);
@@ -212,10 +251,11 @@ int testimony_close(testimony t) {
 int testimony_get_block(testimony t, int timeout_millis,
                         struct tpacket_block_desc** block) {
   struct pollfd pfd;
-  size_t blockidx;
+  uint32_t blockidx;
   int r;
   *block = NULL;
   if (t->sock_fd == 0 || t->ring == 0) {
+    TERR("testimony is not yet initiated, run testimony_init");
     return -EINVAL;
   }
   if (timeout_millis >= 0) {
@@ -224,6 +264,7 @@ int testimony_get_block(testimony t, int timeout_millis,
     pfd.events = POLLIN;
     r = poll(&pfd, 1, timeout_millis);
     if (r < 0) {
+      TERR("testimony poll of socket failed");
       return -errno;
     }
     if (r == 0) {
@@ -233,14 +274,16 @@ int testimony_get_block(testimony t, int timeout_millis,
   }
   r = recv_be_32(t->sock_fd, &blockidx);
   if (r < 0) {
+    TERR("recv of block index failed");
     return -errno;
   }
-  if (blockidx >= t->block_nr) {
-    fprintf(stderr, "%d >= %d\n", blockidx,t->block_nr);
+  if (blockidx >= t->conn.block_nr) {
+    TERR("received invalid block index %d, should be [0, %d)", (int)blockidx,
+         (int)t->conn.block_nr);
     return -EIO;
   }
   *block =
-      (struct tpacket_block_desc*)(t->ring + t->block_size * blockidx);
+      (struct tpacket_block_desc*)(t->ring + t->conn.block_size * blockidx);
   return 0;
 }
 
@@ -248,29 +291,71 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
   int r;
   size_t blockptr = (size_t)block;
   blockptr -= (size_t)t->ring;
-  blockptr /= t->block_size;
-  if (blockptr >= t->block_nr) {
+  blockptr /= t->conn.block_size;
+  if (blockptr >= t->conn.block_nr) {
+    TERR("block does not appear to have come from this testimony instance");
     return -EINVAL;
   }
   r = send_be_32(t->sock_fd, blockptr);
   if (r < 0) {
+    TERR("send of block index failed");
     return -errno;
   }
   return 0;
 }
 
-int testimony_block_size(testimony t) {
-  if (t->sock_fd == 0) {
-    return -1;
+char* testimony_error(testimony t) { return t->errbuf; }
+
+struct testimony_iter_internal {
+  struct tpacket_block_desc* block;
+  uint8_t* pkt;
+  int left;
+};
+
+int testimony_iter_init(testimony_iter* iter) {
+  *iter = (testimony_iter)malloc(sizeof(struct testimony_iter_internal));
+  if (*iter == NULL) {
+    return -ENOMEM;
   }
-  return t->block_size;
+  memset(*iter, 0, sizeof(struct testimony_iter_internal));
+  return 0;
 }
 
-int testimony_block_nr(testimony t) {
-  if (t->sock_fd == 0) {
-    return -1;
+int testimony_iter_reset(testimony_iter iter,
+                         struct tpacket_block_desc* block) {
+  if (block->version != TPACKET_V3) {
+    return -EPROTONOSUPPORT;
   }
-  return t->block_nr;
+  iter->block = block;
+  iter->left = block->hdr.bh1.num_pkts;
+  iter->pkt = NULL;
+  return 0;
+}
+
+struct tpacket3_hdr* testimony_iter_next(testimony_iter iter) {
+  if (!iter->left) {
+    return NULL;
+  }
+  iter->left--;
+  if (iter->pkt) {
+    iter->pkt += ((struct tpacket3_hdr*)iter->pkt)->tp_next_offset;
+  } else {
+    iter->pkt =
+        (uint8_t*)iter->block + iter->block->hdr.bh1.offset_to_first_pkt;
+  }
+  return (struct tpacket3_hdr*)iter->pkt;
+}
+
+int testimony_iter_close(testimony_iter iter) {
+  free(iter);
+  return 0;
+}
+
+uint8_t* testimony_packet_data(struct tpacket3_hdr* pkt) {
+  return (uint8_t*)pkt + pkt->tp_mac;
+}
+int64_t testimony_packet_nanos(struct tpacket3_hdr* pkt) {
+  return (int64_t)pkt->tp_sec * 1000000000LL + pkt->tp_nsec;
 }
 
 #ifdef __cplusplus

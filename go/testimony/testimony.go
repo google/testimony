@@ -44,11 +44,18 @@ func localSocketName() string {
 // Conn is a connection to the testimonyd server.  It allows the current process
 // to share testimonyd AF_PACKET sockets.
 type Conn struct {
-	c                    *net.UnixConn
-	fd                   int
-	ring                 []byte
-	numBlocks, blockSize int
+	c    *net.UnixConn
+	fd   int
+	ring []byte
+
+	numBlocks  int
+	blockSize  int
+	fanoutSize int
 }
+
+func (c *Conn) NumBlocks() int  { return c.numBlocks }
+func (c *Conn) BlockSize() int  { return c.blockSize }
+func (c *Conn) FanoutSize() int { return c.fanoutSize }
 
 // Close closes the connection to the testimonyd server.
 func (t *Conn) Close() (ret error) {
@@ -103,43 +110,57 @@ func Connect(socketname string, num int) (*Conn, error) {
 	if err == nil {
 		return nil, fmt.Errorf("error connecting: %v", err)
 	}
-	var version [1]byte
-	if n, err := t.c.Read(version[:]); err != nil || n != 1 {
-		return nil, fmt.Errorf("error reading version byte: %v", err)
-	} else if version[0] != protocolVersion {
-		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, version[0])
+	var initial [13]byte
+	if n, err := t.c.Read(initial[:]); err != nil || n != len(initial) {
+		return nil, fmt.Errorf("error reading initial byte: %v", err)
+	} else if initial[0] != protocolVersion {
+		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, initial[0])
 	}
-	if n, err := t.c.Write([]byte{byte(num)}); err != nil || n != 1 {
-		return nil, fmt.Errorf("error writing initial request: %v", err)
+	_ = int(binary.BigEndian.Uint32(initial[1:]))
+	t.fanoutSize = int(binary.BigEndian.Uint32(initial[1:]))
+	t.blockSize = int(binary.BigEndian.Uint32(initial[5:]))
+	t.numBlocks = int(binary.BigEndian.Uint32(initial[9:]))
+	done = true
+	return t, nil
+}
+
+func (t *Conn) Init(fanoutIndex int) (err error) {
+	// TODO:  Parse fanout size, allow client to chose fanout number based on it.
+	defer func() {
+		if err != nil {
+			t.Close()
+		}
+	}()
+	var fanoutNum [4]byte
+	binary.BigEndian.PutUint32(fanoutNum[:], uint32(fanoutIndex))
+	if _, err := t.c.Write(fanoutNum[:]); err != nil {
+		return fmt.Errorf("error writing initial request: %v", err)
 	}
-	var msg [8]byte
+	var msg [1]byte
 	var oob [1024]byte
 	n, n2, _, _, err := t.c.ReadMsgUnix(msg[:], oob[:])
 	if err != nil {
-		return nil, fmt.Errorf("error reading fd: %v", err)
+		return fmt.Errorf("error reading fd: %v", err)
 	} else if n != len(msg) {
-		return nil, fmt.Errorf("got wrong number of initial bytes: %d", n)
+		return fmt.Errorf("got wrong number of initial bytes: %d", n)
 	} else if n2 >= len(oob) {
-		return nil, fmt.Errorf("got too many oob bytes: %d", n2)
+		return fmt.Errorf("got too many oob bytes: %d", n2)
 	}
 	if msgs, err := syscall.ParseSocketControlMessage(oob[:n2]); err != nil {
-		return nil, fmt.Errorf("could not parse socket control msg: %v", err)
+		return fmt.Errorf("could not parse socket control msg: %v", err)
 	} else if len(msgs) != 1 {
-		return nil, fmt.Errorf("wrong number of control messages: %d", len(msgs))
+		return fmt.Errorf("wrong number of control messages: %d", len(msgs))
 	} else if fds, err := syscall.ParseUnixRights(&msgs[0]); err != nil {
-		return nil, fmt.Errorf("could not parse unix rights: %v", err)
+		return fmt.Errorf("could not parse unix rights: %v", err)
 	} else if len(fds) != 1 {
-		return nil, fmt.Errorf("wrong number of fds: %d", len(fds))
+		return fmt.Errorf("wrong number of fds: %d", len(fds))
 	} else {
 		t.fd = fds[0]
 	}
-	t.blockSize = int(binary.BigEndian.Uint32(msg[:]))
-	t.numBlocks = int(binary.BigEndian.Uint32(msg[4:]))
 	if t.ring, err = syscall.Mmap(t.fd, 0, t.blockSize*t.numBlocks, syscall.PROT_READ, syscall.MAP_SHARED|syscall.MAP_LOCKED|syscall.MAP_NORESERVE); err != nil {
-		return nil, fmt.Errorf("mmap failed: %v", err)
+		return fmt.Errorf("mmap failed: %v", err)
 	}
-	done = true
-	return t, nil
+	return nil
 }
 
 // Block gets the next block of packets from testimonyd.

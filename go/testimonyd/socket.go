@@ -198,8 +198,8 @@ func (c *conn) run() {
 				mu.Unlock()
 				var buf [4]byte
 				binary.BigEndian.PutUint32(buf[:], uint32(b.index))
-				if n, err := c.c.Write(buf[:]); err != nil || n != len(buf) {
-					v(1, "%v write error for %v (%d bytes): %v", c, b, n, err)
+				if _, err := c.c.Write(buf[:]); err != nil {
+					v(1, "%v write error for %v: %v", c, b, err)
 					return
 				}
 			}

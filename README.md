@@ -34,12 +34,10 @@ these configuration options:
      where/how to communicate with `testimonyd`.
 *   **Interface:**  Name of the interface to sniff packets on, e.g. `eth0`, `em1`,
      etc.
-*   **BlockSizePowerOf2:**  AF_PACKET provides packets to user-space by filling up
+*   **BlockSize:**  AF_PACKET provides packets to user-space by filling up
      memory blocks of a specific size, until it either can't fit the next packet
      into the current block or a timeout is reached.  The larger the block, the
-     more packets can be passed to the user at once.  We allow blocks to be any
-     power-of-2 size.  If `BlockSizePowerOf2` is 20, blocks will be `1<<20`
-     bytes (1MB) each.
+     more packets can be passed to the user at once.  BlockSize is in bytes.
 *   **NumBlocks:**  Number of blocks to allocate in memory.  `NumBlocks *
      BlockSize` is the total size in memory of the AF_PACKET packet memory
      region for a single fanout.
@@ -57,7 +55,9 @@ these configuration options:
 *   **User:** This socket will be owned by the given user, mode `0600`.  This
      allows root to provide different sockets with different capabilities to
      specific users.
-*   **Filter:** BPF filter for this socket.
+*   **Filter:** BPF filter for this socket.  If this is set, testimony will
+     guarantee that the socket passed to child processes has this filter locked
+     in such a way that clients cannot remove it.
 
 ### Wire Protocol ###
 
@@ -67,21 +67,24 @@ connections and passing memory regions back and forth:
     SERVER                                              CLIENT
     ------                                              ------
              <-- initial connection ---
-             --- version byte (1) --->
-             <-- fanout number (1-FanoutSize) ---
-             --- socket FD, block size, num blocks -->
+             --- version byte (1 byte == 1) --->
+             --- fanout size (4BE) -->
+             --- block size (4BE) -->
+             --- number of blocks (4BE) -->
+             <-- fanout number [0-FanoutSize) (4BE) ---
+             --- socket FD, + 1 dummy byte (ignored) -->
 
-           .. At this point, the client is connected. ..
-           .. All other communication is one of the   ..
-           .. following 2 possibilities:              ..
+              At this point, the client is connected.
+              All other communication is one of the
+              following 2 possibilities:
 
-             --- block index for client (4 bytes BE) -->
-             <-- block index to return (4 bytes BE) ---
+             --- block index for client (4BE) -->
+             <-- block index to return (4BE) ---
 
-Most communication is 4-byte "packets".  The one excepion is the message
-that sends the socket FD from server to client.  That contains the FD itself, as
-well as 8 bytes, representing the block size and number of blocks as big-endian
-uint32.
+Most communication is 4-byte "packets" (4BE above means 4 bytes, big endian).
+Pne excepion is the message that sends the socket FD from server to client.
+That contains the FD itself, as well as 8 bytes, representing the block size
+and number of blocks both 4BE as well.
 
 Once communication is established, server and client simply exchange block
 indexes.  The server sends a block index to the client when that block is

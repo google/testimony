@@ -16,7 +16,9 @@ all: go c
 
 clean: go_clean c_clean
 
-.PHONY: c go c_clean go_clean all clean
+install: go_install c_install
+
+.PHONY: c go
 
 go:
 	$(MAKE) -C go
@@ -24,8 +26,14 @@ go:
 go_clean:
 	$(MAKE) -C go clean
 
+go_install:
+	$(MAKE) -C go install
+
 c:
 	$(MAKE) -C c
 
 c_clean:
 	$(MAKE) -C c clean
+
+c_install:
+	$(MAKE) -C c install
