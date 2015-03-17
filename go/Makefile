@@ -16,6 +16,8 @@ all: testimony testimonyd
 
 clean: testimony_clean testimonyd_clean
 
+install: testimonyd_install
+
 .PHONY: testimony testimonyd
 
 testimony:
@@ -29,3 +31,6 @@ testimonyd:
 
 testimonyd_clean:
 	$(MAKE) -C testimonyd clean
+
+testimonyd_install:
+	$(MAKE) -C testimonyd install

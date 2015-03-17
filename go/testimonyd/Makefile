@@ -16,11 +16,13 @@ GO=go
 
 all: testimonyd
 
-.PHONY: all clean
+.PHONY: all clean install
 
 clean:
 	rm -rf testimonyd
 
 testimonyd: *.c *.h *.go
 	$(GO) build -o testimonyd
-	# sudo setcap 'CAP_NET_RAW+ep CAP_NET_ADMIN+ep CAP_IPC_LOCK+ep' testimonyd
+
+install: testimonyd
+	cp -fv testimonyd /usr/sbin/testimonyd
