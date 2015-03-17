@@ -81,7 +81,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	}
 	s.fd = int(fd)
 	s.ring = uintptr(ring)
-	v(1, "%v set up with %+v", s, sc)
+	log.Printf("%v set up with %+v", s, sc)
 	return s, nil
 }
 
@@ -204,7 +204,7 @@ func (c *conn) run() {
 	case <-readDone:
 	case <-writeDone:
 	}
-	v(1, "%v closing", c)
+	log.Println("Connection %v closing", c)
 	c.c.Close()
 	v(3, "%v marking self old", c)
 	c.s.oldConns <- c
@@ -227,12 +227,12 @@ func (c *conn) run() {
 }
 
 func (s *Socket) addNewConn(c *net.UnixConn) {
-	v(1, "%v new connection", s)
 	newConn := &conn{
 		s:         s,
 		c:         c,
 		newBlocks: make(chan *block),
 	}
+	log.Printf("%v new connection %v", s, newConn)
 	s.currentConns[newConn] = true
 	go newConn.run()
 }
