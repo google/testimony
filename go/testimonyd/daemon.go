@@ -29,7 +29,10 @@ import (
 	"syscall"
 )
 
-var confFilename = flag.String("config", "/etc/testimony.conf", "Testimony config")
+var (
+	confFilename = flag.String("config", "/etc/testimony.conf", "Testimony config")
+	logToSyslog  = flag.Bool("syslog", true, "log messages to syslog")
+)
 
 type Testimony []SocketConfig
 
@@ -122,7 +125,7 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 			c.Close()
 		}
 	}()
-	v(1, "Received new connection %v", c.RemoteAddr())
+	log.Printf("Received new connection %v", c.RemoteAddr())
 	var buf [13]byte
 	buf[0] = protocolVersion
 	binary.BigEndian.PutUint32(buf[1:], uint32(len(socks)))
@@ -158,7 +161,14 @@ func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
 
 func main() {
 	flag.Parse()
-	v(1, "Starting testimonyd...")
+	if *logToSyslog {
+		s, err := syslog.New(syslog.LOG_USER|syslog.LOG_INFO, "testimonyd")
+		if err != nil {
+			log.Fatalf("could not set up syslog logging: %v", err)
+		}
+		log.SetOutput(s)
+	}
+	log.Printf("Starting testimonyd...")
 	confdata, err := ioutil.ReadFile(*confFilename)
 	if err != nil {
 		log.Fatalf("could not read configuration %q: %v", *confFilename, err)
