@@ -144,74 +144,13 @@ func (s *socket) run() {
 	}
 }
 
-// outstanding keeps track of the blocks that a client has outstanding.  Should
-// the client close its connection, this object's clearRemaining method can be
-// used to unref all remaining ref'd blocks that client has.
-type outstanding struct {
-	c   *conn
-	mu  sync.Mutex
-	got []time.Time
-}
-
-func newOutstanding(c *conn) *outstanding {
-	return &outstanding{
-		c:   c,
-		got: make([]time.Time, c.s.conf.NumBlocks),
-	}
-}
-
-// mark tells this object that the conn has a ref on the given block.
-func (o *outstanding) mark(b *block) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if !o.got[b.index].IsZero() {
-		log.Fatalf("%v being marked outstanding twice by %v", b, o.c)
-	}
-	v(4, "%v sent to %v", b, o.c)
-	o.got[b.index] = time.Now()
-}
-
-// clear tells outstanding to release the ref on the given block.
-func (o *outstanding) clear(b *block) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.clearLocked(b)
-}
-
-// clearLocked clears the ref on the given block.  MUST be called with o.mu
-// locked.
-func (o *outstanding) clearLocked(b *block) {
-	if o.got[b.index].IsZero() {
-		log.Fatalf("%v being cleared but not marked in %v", b, o.c)
-	}
-	duration := time.Since(o.got[b.index])
-	level := 4
-	if duration > time.Second/4 {
-		level = 1
-	}
-	v(level, "%v returned %v after %v", o.c, b, duration)
-	o.got[b.index] = time.Time{} // zero it out
-	b.unref()                    // THIS IS THE IMPORTANT LINE :D
-}
-
-// clearRemaining unrefs all remaining blocks the conn has open.
-func (o *outstanding) clearRemaining() {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	out := map[int]time.Time{}
-	for i, t := range o.got {
-		if !t.IsZero() {
-			o.clearLocked(o.c.s.blocks[i])
-		}
-	}
-}
-
 // conn represents a set-up client connection (already initiated and with the
 // file descriptor passed through).
 type conn struct {
 	s         *socket
 	c         *net.UnixConn
 	newBlocks chan *block
+	oldBlocks chan int
 }
 
 // String returns a unique string for this connection.
@@ -220,8 +159,8 @@ func (c *conn) String() string {
 }
 
 // handleReads handles client->server communication.
-func (c *conn) handleReads(readDone, writeDone chan struct{}, out *outstanding) {
-	defer close(readDone)
+func (c *conn) handleReads() {
+	defer close(c.oldBlocks)
 	for {
 		// Wait for a block index to be passed back from the client.
 		var buf [4]byte
@@ -237,36 +176,9 @@ func (c *conn) handleReads(readDone, writeDone chan struct{}, out *outstanding) 
 			log.Printf("%v got invalid block %d", c, i)
 			return
 		}
-		b := c.s.blocks[i]
-		out.clear(b)
-
-		// If the server->client goroutine has finished, we should too.
-		select {
-		case <-writeDone:
-			v(2, "%v read detected write closure", c)
-			return
-		default:
-		}
-	}
-}
-
-// handleWrites handles server->client communication.
-func (c *conn) handleWrites(readDone, writeDone chan struct{}, out *outstanding) {
-	defer close(writeDone)
-	for {
-		select {
-		case <-readDone:
-			v(2, "%v write detected read closure", c)
-			return
-		case b := <-c.newBlocks:
-			out.mark(b)
-			var buf [4]byte
-			binary.BigEndian.PutUint32(buf[:], uint32(b.index))
-			if _, err := c.c.Write(buf[:]); err != nil {
-				v(1, "%v write error for %v: %v", c, b, err)
-				return
-			}
-		}
+		// We add one to the returned int so we can detect a closed channel (which
+		// returns 0, the zero-value for ints).
+		c.oldBlocks <- i + 1
 	}
 }
 
@@ -275,16 +187,39 @@ func (c *conn) handleWrites(readDone, writeDone chan struct{}, out *outstanding)
 // newBlocks channel will be unref'd exactly once.  It's up to the block sender
 // to ref the blocks for the conn.
 func (c *conn) run() {
-	out := newOutstanding(c)
-	readDone := make(chan struct{})
-	writeDone := make(chan struct{})
-	go c.handleReads(readDone, writeDone, out)
-	go c.handleWrites(readDone, writeDone, out)
+	go c.handleReads()
+	outstanding := make([]time.Time, len(c.s.blocks))
 
 	// Wait for either the reader or writer to stop.
-	select {
-	case <-readDone:
-	case <-writeDone:
+loop:
+	for {
+		select {
+		case b := <-c.newBlocks:
+			if !outstanding[b.index].IsZero() {
+				log.Fatalf("%v received already outstanding block %v", c, b)
+			}
+			outstanding[b.index] = time.Now()
+			var buf [4]byte
+			binary.BigEndian.PutUint32(buf[:], uint32(b.index))
+			if _, err := c.c.Write(buf[:]); err != nil {
+				v(1, "%v write error for %v: %v", c, b, err)
+				break loop
+			}
+		case i := <-c.oldBlocks:
+			if i == 0 {
+				// read loop is closed
+				break loop
+			}
+			i-- // We added 1 to index in handleReads, remove 1 to get back to correct index.
+			if outstanding[i].IsZero() {
+				log.Println("%v received non-outstanding block %v from client", c, i)
+				break loop
+			}
+			b := c.s.blocks[i]
+			v(3, "%v took %v to process block %v", c, time.Since(outstanding[i]), b)
+			outstanding[i] = time.Time{}
+			b.unref() // MOST IMPORTANT LINE EVER
+		}
 	}
 
 	// Close things down.
@@ -293,16 +228,22 @@ func (c *conn) run() {
 	v(3, "%v marking self old", c)
 	c.s.oldConns <- c
 	v(3, "%v waiting for reads", c)
-	<-readDone
-	v(3, "%v waiting for writes", c)
-	<-writeDone
-	v(3, "%v returning unsent blocks", c)
 	for b := range c.newBlocks {
 		v(3, "%v returning unsent %v", c, b)
 		b.unref()
 	}
-	v(3, "%v returning outstanding blocks", c)
-	out.clearRemaining()
+	// empty out oldBlocks to allow handleReads to finish, but don't do anything
+	// with them.  the next loop (over outstanding) will unref and return all
+	// remaining blocks.
+	for _ = range c.oldBlocks {
+	}
+	for i, t := range outstanding {
+		if !t.IsZero() {
+			b := c.s.blocks[i]
+			v(3, "%v returning outstanding %v after %v", c, b, time.Since(t))
+			b.unref()
+		}
+	}
 }
 
 // addNewConn is called by the testimonyd server when a new connection has been
@@ -313,6 +254,7 @@ func (s *socket) addNewConn(c *net.UnixConn) {
 		s:         s,
 		c:         c,
 		newBlocks: make(chan *block),
+		oldBlocks: make(chan int),
 	}
 	log.Printf("%v new connection %v", s, newConn)
 	s.currentConns[newConn] = true
