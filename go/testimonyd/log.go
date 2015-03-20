@@ -23,10 +23,13 @@ import (
 
 var verbose = flag.Int("v", 0, "Verbose logging, increase for more logs")
 
+// v logs a message based on the --v command line flag.
 func v(level int, format string, args ...interface{}) {
 	vup(level, 1, format, args...)
 }
 
+// vup logs a message based on the --v command line flag, using the n'th
+// caller's file/line number instead of this one.
 func vup(level int, caller int, format string, args ...interface{}) {
 	if level <= *verbose {
 		_, file, line, _ := runtime.Caller(caller + 1)

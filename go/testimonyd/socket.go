@@ -35,19 +35,22 @@ import (
 	"unsafe"
 )
 
+// Socket handles a single AF_PACKET socket.  There will be N Socket objects for
+// each SocketConfig, where N == FanoutSize.  This Socket stores the file
+// descriptor and memory region of a single underlying AF_PACKET socket.
 type Socket struct {
-	num          int
-	conf         SocketConfig
-	fd           int
-	newConns     chan *net.UnixConn
-	oldConns     chan *conn
-	newBlocks    chan *block
-	blocks       []*block
-	currentConns map[*conn]bool
-	ring         uintptr
-	index        int
+	num          int  // fanout index for this socket
+	conf         SocketConfig  // configuration
+	fd           int  // file descriptor for AF_PACKET socket
+	newConns     chan *net.UnixConn  // new client connections come in here
+	oldConns     chan *conn  // old client connections come in here for cleanup
+	newBlocks    chan *block  // when a new block is available, it comes in here
+	blocks       []*block  // all blocks in the memory region
+	currentConns map[*conn]bool  // list of current connections a new block will be sent to
+	ring         uintptr  // pointer to memory region
 }
 
+// newSocket creates a new Socket object based on a config.
 func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	s := &Socket{
 		num:          num,
@@ -58,6 +61,8 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 		currentConns: map[*conn]bool{},
 		blocks:       make([]*block, sc.NumBlocks),
 	}
+
+  // Compile the BPF filter, if it was requested.
 	var filt *C.struct_sock_fprog
 	if sc.Filter != "" {
 		f, err := compileFilter(sc.Interface, sc.Filter)
@@ -66,9 +71,13 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 		}
 		filt = &f.filt
 	}
+
+  // Set up block objects, used to reference count blocks for clients.
 	for i := 0; i < sc.NumBlocks; i++ {
 		s.blocks[i] = &block{s: s, index: i}
 	}
+
+  // Call into our C code to actually create the socket.
 	iface := C.CString(sc.Interface)
 	defer C.free(unsafe.Pointer(iface))
 	var fd C.int
@@ -85,33 +94,42 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 	return s, nil
 }
 
+// String returns a unique string for this socket.
 func (s *Socket) String() string {
 	return fmt.Sprintf("[S:%v:%v]", s.conf.SocketName, s.num)
 }
 
+// getNewBlocks is a goroutine that watches for new available packet blocks,
+// which the run() method passes to clients.
 func (s *Socket) getNewBlocks() {
+  blockIndex := 0
 	for {
-		b := s.blocks[s.index]
+		b := s.blocks[blockIndex]
 		for !b.ready() {
 			time.Sleep(time.Millisecond * 10)
 		}
 		b.ref()
 		v(3, "%v got new block %v", s, b)
 		s.newBlocks <- b
-		s.index = (s.index + 1) % s.conf.NumBlocks
+		blockIndex = (blockIndex + 1) % s.conf.NumBlocks
 	}
 }
 
+// run handles new connections, old connections, new blocks... basically
+// everything.
 func (s *Socket) run() {
 	go s.getNewBlocks()
 	for {
 		select {
 		case c := <-s.newConns:
+      // register a new client connection
 			s.addNewConn(c)
 		case c := <-s.oldConns:
+      // unregister an old client connection and close its blocks
 			close(c.newBlocks)
 			delete(s.currentConns, c)
 		case b := <-s.newBlocks:
+      // a new block is avaiable, send it out to all clients
 			for c, _ := range s.currentConns {
 				b.ref()
 				select {
@@ -126,12 +144,15 @@ func (s *Socket) run() {
 	}
 }
 
+// conn represents a set-up client connection (already initiated and with the
+// file descriptor passed through).
 type conn struct {
 	s         *Socket
 	c         *net.UnixConn
 	newBlocks chan *block
 }
 
+// String returns a unique string for this connection.
 func (c *conn) String() string {
 	return fmt.Sprintf("[C:%v:%v]", c.s, c.c.RemoteAddr())
 }
@@ -144,9 +165,10 @@ func (c *conn) run() {
 	var mu sync.Mutex // protects outstanding
 	readDone := make(chan struct{})
 	writeDone := make(chan struct{})
-	go func() { // handle reads
+	go func() { // Handles client->server communication.
 		defer close(readDone)
 		for {
+      // Wait for a block index to be passed back from the client.
 			var buf [4]byte
 			n, err := c.c.Read(buf[:])
 			if err == io.EOF {
@@ -161,6 +183,8 @@ func (c *conn) run() {
 				return
 			}
 			b := c.s.blocks[i]
+
+      // Figure out how long the client had the block.
 			mu.Lock()
 			t := outstanding[i]
 			outstanding[i] = time.Time{}
@@ -175,7 +199,11 @@ func (c *conn) run() {
 				level = 1
 			}
 			v(level, "%v returned %v after %v", c, b, duration)
+
+      // MOST IMPORTANT:  unref the block :)
 			b.unref()
+
+      // If the server->client goroutine has finished, we should too.
 			select {
 			case <-writeDone:
 				v(2, "%v read detected write closure", c)
@@ -184,7 +212,7 @@ func (c *conn) run() {
 			}
 		}
 	}()
-	go func() {
+	go func() {  // Handles server->client communication.
 		defer close(writeDone)
 		for {
 			select {
@@ -205,10 +233,14 @@ func (c *conn) run() {
 			}
 		}
 	}()
+
+  // Wait for either the reader or writer to stop.
 	select {
 	case <-readDone:
 	case <-writeDone:
 	}
+
+  // Close things down.
 	log.Println("Connection %v closing", c)
 	c.c.Close()
 	v(3, "%v marking self old", c)
@@ -231,6 +263,9 @@ func (c *conn) run() {
 	}
 }
 
+// addNewConn is called by the testimonyd server when a new connection has been
+// initiated.  The passed-in conn should already have done the initial
+// configuration handshake, and be ready to start receiving blocks.
 func (s *Socket) addNewConn(c *net.UnixConn) {
 	newConn := &conn{
 		s:         s,
@@ -242,13 +277,16 @@ func (s *Socket) addNewConn(c *net.UnixConn) {
 	go newConn.run()
 }
 
+// block stores ilocal information on a single block within the memory region.
 type block struct {
 	s     *Socket
+	index int  // my index within the memory block
+
 	mu    sync.Mutex
-	r     int
-	index int
+	r     int  // reference count for this block, protected by mu
 }
 
+// ref reference the block.
 func (b *block) ref() {
 	b.mu.Lock()
 	vup(5, 1, "%v ref %d->%d", b, b.r, b.r+1)
@@ -256,6 +294,8 @@ func (b *block) ref() {
 	b.mu.Unlock()
 }
 
+// unref dereferences the block.  When the refcount reaches zero, the block is
+// returned to the kernel via clear().
 func (b *block) unref() {
 	b.mu.Lock()
 	vup(5, 1, "%v unref %d->%d", b, b.r, b.r-1)
@@ -268,32 +308,40 @@ func (b *block) unref() {
 	b.mu.Unlock()
 }
 
+// String provides a unique human-readable string.
 func (b *block) String() string {
 	return fmt.Sprintf("[B:%v:%v]", b.s, b.index)
 }
 
+// cblock provides this block as a C tpacket pointer.
 func (b *block) cblock() *C.struct_tpacket_hdr_v1 {
 	blockDesc := (*C.struct_tpacket_block_desc)(unsafe.Pointer(b.s.ring + uintptr(b.s.conf.BlockSize)*uintptr(b.index)))
 	hdr := (*C.struct_tpacket_hdr_v1)(unsafe.Pointer(&blockDesc.hdr[0]))
 	return hdr
 }
 
+// clear clears the block's block status, returning the block to the kernel so
+// it can add additional packets.
 func (b *block) clear() {
 	vup(3, 2, "%v clear", b)
 	b.cblock().block_status = 0
 }
 
+// ready returns true when the block status has been set by the kernel, saying
+// that packets are ready for processing.
 func (b *block) ready() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.r == 0 && b.cblock().block_status != 0
 }
 
+// filter wraps a C BPF filter.
 type filter struct {
 	bpfs []C.struct_sock_filter
 	filt C.struct_sock_fprog
 }
 
+// compileFilter compiles a BPF filter, currently by calling tcpdump externally.
 func compileFilter(iface, filt string) (*filter, error) {
 	cmd := exec.Command("/usr/sbin/tcpdump", "-i", iface, "-ddd", filt)
 	var out bytes.Buffer

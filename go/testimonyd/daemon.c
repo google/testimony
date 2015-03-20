@@ -28,16 +28,23 @@
 #define UNIX_PATH_MAX 108
 #endif
 
+// AFPacket does all of the necessary construction of an AF_PACKET socket
+// in C, to avoid a bunch of C.blah cgo stuff in daemon.go.  It takes in a bunch
+// of arguments and outputs an AF_PACKET socket file descriptor, a void*
+// pointing to the mmap'd region of that socket, and any error message.
+// Returns zero on success, on error returns -1 and sets errno.
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
              int fanout_id, int fanout_type, const struct sock_fprog* filter,
              // outputs:
              int* fd, void** ring, const char** err) {
+  // Set up the initial socket.
   *fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
   if (*fd < 0) {
+    *err = "socket creation failure";
     return -1;
   }
 
-  int fanout = (fanout_id & 0xFFFF) | (fanout_type << 16);
+  // Request TPACKET_V3.
   int v = TPACKET_V3;
   int r = setsockopt(*fd, SOL_PACKET, PACKET_VERSION, &v, sizeof(v));
   if (r < 0) {
@@ -45,18 +52,7 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
     goto fail1;
   }
 
-  struct tpacket_req3 tp3;
-  memset(&tp3, 0, sizeof(tp3));
-  tp3.tp_block_size = block_size;
-  tp3.tp_frame_size = block_size;
-  tp3.tp_block_nr = block_nr;
-  tp3.tp_frame_nr = block_nr;
-  tp3.tp_retire_blk_tov = block_ms;  // timeout, ms
-  r = setsockopt(*fd, SOL_PACKET, PACKET_RX_RING, &tp3, sizeof(tp3));
-  if (r < 0) {
-    *err = "setsockopt PACKET_RX_RING failure";
-    goto fail1;
-  }
+  // If requested, set up and lock a BPF filter on the socket.
   if (filter) {
 #if defined(SO_ATTACH_FILTER) && defined(SO_LOCK_FILTER)
     r = setsockopt(*fd, SOL_SOCKET, SO_ATTACH_FILTER, filter, sizeof(*filter));
@@ -83,6 +79,21 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
 #endif
   }
 
+  // Request a RX_RING so we can mmap the socket.
+  struct tpacket_req3 tp3;
+  memset(&tp3, 0, sizeof(tp3));
+  tp3.tp_block_size = block_size;
+  tp3.tp_frame_size = block_size;
+  tp3.tp_block_nr = block_nr;
+  tp3.tp_frame_nr = block_nr;
+  tp3.tp_retire_blk_tov = block_ms;  // timeout, ms
+  r = setsockopt(*fd, SOL_PACKET, PACKET_RX_RING, &tp3, sizeof(tp3));
+  if (r < 0) {
+    *err = "setsockopt PACKET_RX_RING failure";
+    goto fail1;
+  }
+
+  // MMap the RX_RING to create a packet memory region.
   *ring =
       mmap(NULL, tp3.tp_block_size * tp3.tp_block_nr, PROT_READ | PROT_WRITE,
            MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, *fd, 0);
@@ -92,6 +103,7 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
     goto fail1;
   }
 
+  // Bind the socket to a single interface.
   struct sockaddr_ll ll;
   memset(&ll, 0, sizeof(ll));
   ll.sll_family = AF_PACKET;
@@ -108,6 +120,8 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
     goto fail2;
   }
 
+  // Set up fanout.
+  int fanout = (fanout_id & 0xFFFF) | (fanout_type << 16);
   r = setsockopt(*fd, SOL_PACKET, PACKET_FANOUT, &fanout, sizeof(fanout));
   if (r < 0) {
     *err = "setsockopt PACKET_FANOUT failed";
