@@ -30,7 +30,7 @@ import (
 	"net"
 	"os/exec"
 	"strconv"
-	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -266,30 +266,25 @@ type block struct {
 	s     *socket
 	index int // my index within the memory block
 
-	mu sync.Mutex
-	r  int // reference count for this block, protected by mu
+	r int32 // reference count for this block, uses atomic
 }
 
 // ref reference the block.
 func (b *block) ref() {
-	b.mu.Lock()
-	vup(5, 1, "%v ref %d->%d", b, b.r, b.r+1)
-	b.r++
-	b.mu.Unlock()
+	refs := atomic.AddInt32(&b.r, 1)
+	vup(5, 1, "%v refs = %d", b, refs)
 }
 
 // unref dereferences the block.  When the refcount reaches zero, the block is
 // returned to the kernel via clear().
 func (b *block) unref() {
-	b.mu.Lock()
-	vup(5, 1, "%v unref %d->%d", b, b.r, b.r-1)
-	b.r--
-	if b.r == 0 {
+	refs := atomic.AddInt32(&b.r, -1)
+	vup(5, 1, "%v unref = %d", b, refs)
+	if refs == 0 {
 		b.clear()
-	} else if b.r < 0 {
-		panic(fmt.Sprintf("invalid unref of %v to %d", b, b.r))
+	} else if refs < 0 {
+		panic(fmt.Sprintf("invalid unref of %v to %d", b, refs))
 	}
-	b.mu.Unlock()
 }
 
 // String provides a unique human-readable string.
@@ -314,9 +309,7 @@ func (b *block) clear() {
 // ready returns true when the block status has been set by the kernel, saying
 // that packets are ready for processing.
 func (b *block) ready() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.r == 0 && b.cblock().block_status != 0
+	return atomic.LoadInt32(&b.r) == 0 && b.cblock().block_status != 0
 }
 
 // filter wraps a C BPF filter.
