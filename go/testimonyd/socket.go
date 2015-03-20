@@ -35,10 +35,10 @@ import (
 	"unsafe"
 )
 
-// Socket handles a single AF_PACKET socket.  There will be N Socket objects for
+// socket handles a single AF_PACKET socket.  There will be N Socket objects for
 // each SocketConfig, where N == FanoutSize.  This Socket stores the file
 // descriptor and memory region of a single underlying AF_PACKET socket.
-type Socket struct {
+type socket struct {
 	num          int                // fanout index for this socket
 	conf         SocketConfig       // configuration
 	fd           int                // file descriptor for AF_PACKET socket
@@ -51,8 +51,8 @@ type Socket struct {
 }
 
 // newSocket creates a new Socket object based on a config.
-func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
-	s := &Socket{
+func newSocket(sc SocketConfig, fanoutID int, num int) (*socket, error) {
+	s := &socket{
 		num:          num,
 		conf:         sc,
 		newConns:     make(chan *net.UnixConn),
@@ -95,13 +95,13 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 }
 
 // String returns a unique string for this socket.
-func (s *Socket) String() string {
+func (s *socket) String() string {
 	return fmt.Sprintf("[S:%v:%v]", s.conf.SocketName, s.num)
 }
 
 // getNewBlocks is a goroutine that watches for new available packet blocks,
 // which the run() method passes to clients.
-func (s *Socket) getNewBlocks() {
+func (s *socket) getNewBlocks() {
 	blockIndex := 0
 	for {
 		b := s.blocks[blockIndex]
@@ -117,7 +117,7 @@ func (s *Socket) getNewBlocks() {
 
 // run handles new connections, old connections, new blocks... basically
 // everything.
-func (s *Socket) run() {
+func (s *socket) run() {
 	go s.getNewBlocks()
 	for {
 		select {
@@ -144,10 +144,72 @@ func (s *Socket) run() {
 	}
 }
 
+// outstanding keeps track of the blocks that a client has outstanding.  Should
+// the client close its connection, this object's clearRemaining method can be
+// used to unref all remaining ref'd blocks that client has.
+type outstanding struct {
+	c   *conn
+	mu  sync.Mutex
+	got []time.Time
+}
+
+func newOutstanding(c *conn) *outstanding {
+	return &outstanding{
+		c:   c,
+		got: make([]time.Time, c.s.conf.NumBlocks),
+	}
+}
+
+// mark tells this object that the conn has a ref on the given block.
+func (o *outstanding) mark(b *block) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.got[b.index].IsZero() {
+		log.Fatalf("%v being marked outstanding twice by %v", b, o.c)
+	}
+	v(4, "%v sent to %v", b, o.c)
+	o.got[b.index] = time.Now()
+}
+
+// clear tells outstanding to release the ref on the given block.
+func (o *outstanding) clear(b *block) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.clearLocked(b)
+}
+
+// clearLocked clears the ref on the given block.  MUST be called with o.mu
+// locked.
+func (o *outstanding) clearLocked(b *block) {
+	if o.got[b.index].IsZero() {
+		log.Fatalf("%v being cleared but not marked in %v", b, o.c)
+	}
+	duration := time.Since(o.got[b.index])
+	level := 4
+	if duration > time.Second/4 {
+		level = 1
+	}
+	v(level, "%v returned %v after %v", o.c, b, duration)
+	o.got[b.index] = time.Time{} // zero it out
+	b.unref()                    // THIS IS THE IMPORTANT LINE :D
+}
+
+// clearRemaining unrefs all remaining blocks the conn has open.
+func (o *outstanding) clearRemaining() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := map[int]time.Time{}
+	for i, t := range o.got {
+		if !t.IsZero() {
+			o.clearLocked(o.c.s.blocks[i])
+		}
+	}
+}
+
 // conn represents a set-up client connection (already initiated and with the
 // file descriptor passed through).
 type conn struct {
-	s         *Socket
+	s         *socket
 	c         *net.UnixConn
 	newBlocks chan *block
 }
@@ -157,82 +219,67 @@ func (c *conn) String() string {
 	return fmt.Sprintf("[C:%v:%v]", c.s, c.c.RemoteAddr())
 }
 
+// handleReads handles client->server communication.
+func (c *conn) handleReads(readDone, writeDone chan struct{}, out *outstanding) {
+	defer close(readDone)
+	for {
+		// Wait for a block index to be passed back from the client.
+		var buf [4]byte
+		n, err := c.c.Read(buf[:])
+		if err == io.EOF {
+			return
+		} else if err != nil || n != len(buf) {
+			v(1, "%v read error (%d bytes): %v", c, n, err)
+			return
+		}
+		i := int(binary.BigEndian.Uint32(buf[:]))
+		if i < 0 || i >= c.s.conf.NumBlocks {
+			log.Printf("%v got invalid block %d", c, i)
+			return
+		}
+		b := c.s.blocks[i]
+		out.clear(b)
+
+		// If the server->client goroutine has finished, we should too.
+		select {
+		case <-writeDone:
+			v(2, "%v read detected write closure", c)
+			return
+		default:
+		}
+	}
+}
+
+// handleWrites handles server->client communication.
+func (c *conn) handleWrites(readDone, writeDone chan struct{}, out *outstanding) {
+	defer close(writeDone)
+	for {
+		select {
+		case <-readDone:
+			v(2, "%v write detected read closure", c)
+			return
+		case b := <-c.newBlocks:
+			out.mark(b)
+			var buf [4]byte
+			binary.BigEndian.PutUint32(buf[:], uint32(b.index))
+			if _, err := c.c.Write(buf[:]); err != nil {
+				v(1, "%v write error for %v: %v", c, b, err)
+				return
+			}
+		}
+	}
+}
+
 // run handles communicating with a single external client via a single
 // connection.  It maintains the invariant that every block it gets via the
-// newBlocks channel will be unref'd exactly once.
+// newBlocks channel will be unref'd exactly once.  It's up to the block sender
+// to ref the blocks for the conn.
 func (c *conn) run() {
-	outstanding := make([]time.Time, c.s.conf.NumBlocks)
-	var mu sync.Mutex // protects outstanding
+	out := newOutstanding(c)
 	readDone := make(chan struct{})
 	writeDone := make(chan struct{})
-	go func() { // Handles client->server communication.
-		defer close(readDone)
-		for {
-			// Wait for a block index to be passed back from the client.
-			var buf [4]byte
-			n, err := c.c.Read(buf[:])
-			if err == io.EOF {
-				return
-			} else if err != nil || n != len(buf) {
-				v(1, "%v read error (%d bytes): %v", c, n, err)
-				return
-			}
-			i := int(binary.BigEndian.Uint32(buf[:]))
-			if i < 0 || i >= c.s.conf.NumBlocks {
-				log.Printf("%v got invalid block %d", c, i)
-				return
-			}
-			b := c.s.blocks[i]
-
-			// Figure out how long the client had the block.
-			mu.Lock()
-			t := outstanding[i]
-			outstanding[i] = time.Time{}
-			mu.Unlock()
-			if t.IsZero() {
-				log.Printf("%v returned %v that was not outstanding", c, b)
-				return
-			}
-			duration := time.Since(t)
-			level := 4
-			if duration > time.Second/4 {
-				level = 1
-			}
-			v(level, "%v returned %v after %v", c, b, duration)
-
-			// MOST IMPORTANT:  unref the block :)
-			b.unref()
-
-			// If the server->client goroutine has finished, we should too.
-			select {
-			case <-writeDone:
-				v(2, "%v read detected write closure", c)
-				return
-			default:
-			}
-		}
-	}()
-	go func() { // Handles server->client communication.
-		defer close(writeDone)
-		for {
-			select {
-			case <-readDone:
-				v(2, "%v write detected read closure", c)
-				return
-			case b := <-c.newBlocks:
-				mu.Lock()
-				v(4, "%v sent %v to %v", c.s, b, c)
-				outstanding[b.index] = time.Now()
-				mu.Unlock()
-				var buf [4]byte
-				binary.BigEndian.PutUint32(buf[:], uint32(b.index))
-				if _, err := c.c.Write(buf[:]); err != nil {
-					v(1, "%v write error for %v: %v", c, b, err)
-					return
-				}
-			}
-		}
-	}()
+	go c.handleReads(readDone, writeDone, out)
+	go c.handleWrites(readDone, writeDone, out)
 
 	// Wait for either the reader or writer to stop.
 	select {
@@ -255,18 +302,13 @@ func (c *conn) run() {
 		b.unref()
 	}
 	v(3, "%v returning outstanding blocks", c)
-	for b, got := range outstanding {
-		if !got.IsZero() {
-			v(4, "%v returning outstanding %v after %v", c, b, time.Since(got))
-			c.s.blocks[b].unref()
-		}
-	}
+	out.clearRemaining()
 }
 
 // addNewConn is called by the testimonyd server when a new connection has been
 // initiated.  The passed-in conn should already have done the initial
 // configuration handshake, and be ready to start receiving blocks.
-func (s *Socket) addNewConn(c *net.UnixConn) {
+func (s *socket) addNewConn(c *net.UnixConn) {
 	newConn := &conn{
 		s:         s,
 		c:         c,
@@ -279,7 +321,7 @@ func (s *Socket) addNewConn(c *net.UnixConn) {
 
 // block stores ilocal information on a single block within the memory region.
 type block struct {
-	s     *Socket
+	s     *socket
 	index int // my index within the memory block
 
 	mu sync.Mutex

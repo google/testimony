@@ -79,7 +79,7 @@ func RunTestimony(t Testimony) {
 		names[sc.SocketName] = true
 
 		// Set up FanoutSize sockets and start goroutines to manage each.
-		var socks []*Socket
+		var socks []*socket
 		fanoutID++
 		for i := 0; i < sc.FanoutSize; i++ {
 			sock, err := newSocket(sc, fanoutID, i)
@@ -119,7 +119,7 @@ func setPermissions(sc SocketConfig) error {
 	return nil
 }
 
-func (t Testimony) run(list *net.UnixListener, sc SocketConfig, socks []*Socket) {
+func (t Testimony) run(list *net.UnixListener, sc SocketConfig, socks []*socket) {
 	for {
 		c, err := list.AcceptUnix()
 		if err != nil {
@@ -129,7 +129,7 @@ func (t Testimony) run(list *net.UnixListener, sc SocketConfig, socks []*Socket)
 	}
 }
 
-func (t Testimony) handle(socks []*Socket, c *net.UnixConn) {
+func (t Testimony) handle(socks []*socket, c *net.UnixConn) {
 	defer func() {
 		if c != nil {
 			c.Close()
