@@ -42,15 +42,15 @@ const protocolVersion = 1
 
 // SocketConfig defines how an individual socket should be set up.
 type SocketConfig struct {
-	SocketName         string  // filename for the socket
-	Interface          string  // interface to sniff packets on
-	BlockSize          int  // block size (in bytes) of a single packet block
-	NumBlocks          int  // number of packet blocks in the memory region
-	BlockTimeoutMillis int  // timeout for filling up a single block
-	FanoutType         int  // which type of fanout to use (see linux/if_packet.h)
-	FanoutSize         int  // number of threads to fan out to
-	User               string  // user to provide the socket to (will chown it)
-	Filter             string  // BPF filter to apply to this socket
+	SocketName         string // filename for the socket
+	Interface          string // interface to sniff packets on
+	BlockSize          int    // block size (in bytes) of a single packet block
+	NumBlocks          int    // number of packet blocks in the memory region
+	BlockTimeoutMillis int    // timeout for filling up a single block
+	FanoutType         int    // which type of fanout to use (see linux/if_packet.h)
+	FanoutSize         int    // number of threads to fan out to
+	User               string // user to provide the socket to (will chown it)
+	Filter             string // BPF filter to apply to this socket
 }
 
 func (s SocketConfig) uid() (int, error) {
@@ -72,13 +72,13 @@ func RunTestimony(t Testimony) {
 	fanoutID := 0
 	names := map[string]bool{}
 	for _, sc := range t {
-    // Check for duplicate socket names
+		// Check for duplicate socket names
 		if names[sc.SocketName] {
 			log.Fatalf("invalid config: duplicate socket name %q", sc.SocketName)
 		}
 		names[sc.SocketName] = true
 
-    // Set up FanoutSize sockets and start goroutines to manage each.
+		// Set up FanoutSize sockets and start goroutines to manage each.
 		var socks []*Socket
 		fanoutID++
 		for i := 0; i < sc.FanoutSize; i++ {
@@ -90,10 +90,10 @@ func RunTestimony(t Testimony) {
 			go sock.run()
 		}
 
-    // Set up UNIX socket to serve these AF_PACKET sockets on, and start
-    // goroutine to manage its connections.
-    _ignore_error_ := os.Remove(sc.SocketName)
-    _ = _ignore_error_
+		// Set up UNIX socket to serve these AF_PACKET sockets on, and start
+		// goroutine to manage its connections.
+		_ignore_error_ := os.Remove(sc.SocketName)
+		_ = _ignore_error_
 		list, err := net.ListenUnix("unix", &net.UnixAddr{Net: "unix", Name: sc.SocketName})
 		if err != nil {
 			log.Fatalf("failed to listen on socket: %v", err)
@@ -104,7 +104,7 @@ func RunTestimony(t Testimony) {
 	}
 	// We'd love to drop privs here, but thanks to
 	// https://github.com/golang/go/issues/1435 we can't :(
-	select {}  // Block (serving) forever.
+	select {} // Block (serving) forever.
 }
 
 func setPermissions(sc SocketConfig) error {

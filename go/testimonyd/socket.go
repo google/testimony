@@ -39,15 +39,15 @@ import (
 // each SocketConfig, where N == FanoutSize.  This Socket stores the file
 // descriptor and memory region of a single underlying AF_PACKET socket.
 type Socket struct {
-	num          int  // fanout index for this socket
-	conf         SocketConfig  // configuration
-	fd           int  // file descriptor for AF_PACKET socket
-	newConns     chan *net.UnixConn  // new client connections come in here
-	oldConns     chan *conn  // old client connections come in here for cleanup
-	newBlocks    chan *block  // when a new block is available, it comes in here
-	blocks       []*block  // all blocks in the memory region
-	currentConns map[*conn]bool  // list of current connections a new block will be sent to
-	ring         uintptr  // pointer to memory region
+	num          int                // fanout index for this socket
+	conf         SocketConfig       // configuration
+	fd           int                // file descriptor for AF_PACKET socket
+	newConns     chan *net.UnixConn // new client connections come in here
+	oldConns     chan *conn         // old client connections come in here for cleanup
+	newBlocks    chan *block        // when a new block is available, it comes in here
+	blocks       []*block           // all blocks in the memory region
+	currentConns map[*conn]bool     // list of current connections a new block will be sent to
+	ring         uintptr            // pointer to memory region
 }
 
 // newSocket creates a new Socket object based on a config.
@@ -62,7 +62,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 		blocks:       make([]*block, sc.NumBlocks),
 	}
 
-  // Compile the BPF filter, if it was requested.
+	// Compile the BPF filter, if it was requested.
 	var filt *C.struct_sock_fprog
 	if sc.Filter != "" {
 		f, err := compileFilter(sc.Interface, sc.Filter)
@@ -72,12 +72,12 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*Socket, error) {
 		filt = &f.filt
 	}
 
-  // Set up block objects, used to reference count blocks for clients.
+	// Set up block objects, used to reference count blocks for clients.
 	for i := 0; i < sc.NumBlocks; i++ {
 		s.blocks[i] = &block{s: s, index: i}
 	}
 
-  // Call into our C code to actually create the socket.
+	// Call into our C code to actually create the socket.
 	iface := C.CString(sc.Interface)
 	defer C.free(unsafe.Pointer(iface))
 	var fd C.int
@@ -102,7 +102,7 @@ func (s *Socket) String() string {
 // getNewBlocks is a goroutine that watches for new available packet blocks,
 // which the run() method passes to clients.
 func (s *Socket) getNewBlocks() {
-  blockIndex := 0
+	blockIndex := 0
 	for {
 		b := s.blocks[blockIndex]
 		for !b.ready() {
@@ -122,14 +122,14 @@ func (s *Socket) run() {
 	for {
 		select {
 		case c := <-s.newConns:
-      // register a new client connection
+			// register a new client connection
 			s.addNewConn(c)
 		case c := <-s.oldConns:
-      // unregister an old client connection and close its blocks
+			// unregister an old client connection and close its blocks
 			close(c.newBlocks)
 			delete(s.currentConns, c)
 		case b := <-s.newBlocks:
-      // a new block is avaiable, send it out to all clients
+			// a new block is avaiable, send it out to all clients
 			for c, _ := range s.currentConns {
 				b.ref()
 				select {
@@ -168,7 +168,7 @@ func (c *conn) run() {
 	go func() { // Handles client->server communication.
 		defer close(readDone)
 		for {
-      // Wait for a block index to be passed back from the client.
+			// Wait for a block index to be passed back from the client.
 			var buf [4]byte
 			n, err := c.c.Read(buf[:])
 			if err == io.EOF {
@@ -184,7 +184,7 @@ func (c *conn) run() {
 			}
 			b := c.s.blocks[i]
 
-      // Figure out how long the client had the block.
+			// Figure out how long the client had the block.
 			mu.Lock()
 			t := outstanding[i]
 			outstanding[i] = time.Time{}
@@ -195,15 +195,15 @@ func (c *conn) run() {
 			}
 			duration := time.Since(t)
 			level := 4
-			if duration > time.Second / 4 {
+			if duration > time.Second/4 {
 				level = 1
 			}
 			v(level, "%v returned %v after %v", c, b, duration)
 
-      // MOST IMPORTANT:  unref the block :)
+			// MOST IMPORTANT:  unref the block :)
 			b.unref()
 
-      // If the server->client goroutine has finished, we should too.
+			// If the server->client goroutine has finished, we should too.
 			select {
 			case <-writeDone:
 				v(2, "%v read detected write closure", c)
@@ -212,7 +212,7 @@ func (c *conn) run() {
 			}
 		}
 	}()
-	go func() {  // Handles server->client communication.
+	go func() { // Handles server->client communication.
 		defer close(writeDone)
 		for {
 			select {
@@ -234,13 +234,13 @@ func (c *conn) run() {
 		}
 	}()
 
-  // Wait for either the reader or writer to stop.
+	// Wait for either the reader or writer to stop.
 	select {
 	case <-readDone:
 	case <-writeDone:
 	}
 
-  // Close things down.
+	// Close things down.
 	log.Println("Connection %v closing", c)
 	c.c.Close()
 	v(3, "%v marking self old", c)
@@ -280,10 +280,10 @@ func (s *Socket) addNewConn(c *net.UnixConn) {
 // block stores ilocal information on a single block within the memory region.
 type block struct {
 	s     *Socket
-	index int  // my index within the memory block
+	index int // my index within the memory block
 
-	mu    sync.Mutex
-	r     int  // reference count for this block, protected by mu
+	mu sync.Mutex
+	r  int // reference count for this block, protected by mu
 }
 
 // ref reference the block.
