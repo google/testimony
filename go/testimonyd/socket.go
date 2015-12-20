@@ -253,8 +253,8 @@ func (s *socket) addNewConn(c *net.UnixConn) {
 	newConn := &conn{
 		s:         s,
 		c:         c,
-		newBlocks: make(chan *block),
-		oldBlocks: make(chan int),
+		newBlocks: make(chan *block, len(s.blocks)),
+		oldBlocks: make(chan int, len(s.blocks)),
 	}
 	log.Printf("%v new connection %v", s, newConn)
 	s.currentConns[newConn] = true
