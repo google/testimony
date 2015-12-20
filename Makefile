@@ -18,10 +18,15 @@ clean: go_clean c_clean
 
 install: go_install c_install
 
+test: go_test c_test
+
 .PHONY: c go
 
 go:
 	$(MAKE) -C go
+
+go_test:
+	$(MAKE) -C go test
 
 go_clean:
 	$(MAKE) -C go clean
@@ -31,6 +36,9 @@ go_install:
 
 c:
 	$(MAKE) -C c
+
+c_test:
+	$(MAKE) -C c test
 
 c_clean:
 	$(MAKE) -C c clean

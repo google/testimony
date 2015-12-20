@@ -43,3 +43,5 @@ install: libtestimony.a libtestimony.so
 	chmod 644 /usr/lib/libtestimony.{a,so} && \
 	cp -f -v testimony.h /usr/include && \
 	chmod 644 /usr/include/testimony.h
+
+test:

@@ -26,3 +26,6 @@ testimonyd: *.c *.h *.go
 
 install: testimonyd
 	cp -fv testimonyd /usr/sbin/testimonyd
+
+test:
+	go test

@@ -15,6 +15,9 @@
 all:
 	go build
 
+test:
+	go test
+
 clean:
 
 .PHONY: all clean

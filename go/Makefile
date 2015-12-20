@@ -14,6 +14,8 @@
 
 all: testimony testimonyd
 
+test: testimony testimonyd testimony_test testimonyd_test
+
 clean: testimony_clean testimonyd_clean
 
 install: testimonyd_install
@@ -23,11 +25,17 @@ install: testimonyd_install
 testimony:
 	$(MAKE) -C testimony
 
+testimony_test:
+	$(MAKE) -C testimony test
+
 testimony_clean:
 	$(MAKE) -C testimony clean
 
 testimonyd:
 	$(MAKE) -C testimonyd
+
+testimonyd_test:
+	$(MAKE) -C testimonyd test
 
 testimonyd_clean:
 	$(MAKE) -C testimonyd clean
