@@ -30,12 +30,22 @@ struct testimony_internal;
 // AF_PACKET packet blocks.  Usage:
 //
 //   testimony t;
-//   CHECK(testimony_init(&t, "/tmp/socketname", 0) == 0);
+//   CHECK(testimony_init(&t, "/tmp/socketname") == 0);
+//   testimony_connection* conn = testimony_conn(t);
+//   printf("Fanout size:  %d\n", conn->fanout_size);
+//   printf("Block size:  %d\n", conn->block_size);
+//   // Set fanout index you'd like to use, must be [0, fanout_size).
+//   conn->fanout_index = 2;
+//   CHECK(testimony_init(t) == 0);
+//
+//   // Now, you're connected to Testimony and ready to start reading packets.
+//
 //   struct tpacket_block_desc* block;
-//   CHECK(testimony_get_block(t, 1000 /* 1 sec */, &block) == 0);
-//   // use block...
-//   CHECK(testimony_return_block(t, block) == 0);
-//   // call get/return more times if you want.
+//   while (x) {
+//     CHECK(testimony_get_block(t, 1000 /* timeout, millis */, &block) == 0);
+//     // use block...
+//     CHECK(testimony_return_block(t, block) == 0);
+//   }
 //   CHECK(testimony_close(t) == 0);
 typedef struct testimony_internal* testimony;
 
