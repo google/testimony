@@ -212,7 +212,7 @@ loop:
 			}
 			i-- // We added 1 to index in handleReads, remove 1 to get back to correct index.
 			if outstanding[i].IsZero() {
-				log.Println("%v received non-outstanding block %v from client", c, i)
+				log.Printf("%v received non-outstanding block %v from client", c, i)
 				break loop
 			}
 			b := c.s.blocks[i]
@@ -223,7 +223,7 @@ loop:
 	}
 
 	// Close things down.
-	log.Println("Connection %v closing", c)
+	log.Printf("Connection %v closing", c)
 	c.c.Close()
 	v(3, "%v marking self old", c)
 	c.s.oldConns <- c

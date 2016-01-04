@@ -95,7 +95,7 @@ type Block struct {
 }
 
 // Connect connects to the testimonyd server.
-func Connect(socketname string, num int) (*Conn, error) {
+func Connect(socketname string) (*Conn, error) {
 	t := &Conn{}
 	done := false
 	defer func() {
@@ -107,7 +107,7 @@ func Connect(socketname string, num int) (*Conn, error) {
 	t.c, err = net.DialUnix("unix",
 		&net.UnixAddr{Net: "unix", Name: localSocketName()},
 		&net.UnixAddr{Net: "unix", Name: socketname})
-	if err == nil {
+	if err != nil {
 		return nil, fmt.Errorf("error connecting: %v", err)
 	}
 	var initial [13]byte

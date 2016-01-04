@@ -16,48 +16,52 @@
 package main
 
 import (
-  "flag"
-  "log"
-  "time"
+	"flag"
+	"log"
+	"time"
 
-  "github.com/google/testimony/go/testimony"
+	"github.com/google/testimony/go/testimony"
 )
 
 var (
-  socketName = flag.String("socket", "", "Name of testimony socket")
-  fanoutInt = flag.Int("fanout", 0, "Fanout number, if applicable")
+	socketName = flag.String("socket", "", "Name of testimony socket")
+	fanoutInt  = flag.Int("fanout", 0, "Fanout number, if applicable")
 )
 
 func main() {
-  flag.Parse()
+	flag.Parse()
 
-  log.Printf("connecting to %q %d", *socketName, *fanoutInt)
-  conn, err := testimony.Connect(*socketName, *fanoutInt)
-  if err != nil {
-    log.Fatalf("failed to connect: %v", err)
-  }
+	log.Printf("connecting to %q", *socketName)
+	conn, err := testimony.Connect(*socketName)
+	if err != nil {
+		log.Fatalf("failed to connect: %v", err)
+	}
+	log.Printf("setting fanout to %d", *fanoutInt)
+	if err := conn.Init(*fanoutInt); err != nil {
+		log.Fatalf("failed to set fanout: %v", err)
+	}
 
-  log.Printf("reading blocks")
-  totalCount := 0
-  blockNum := 0
-  start := time.Now()
-  for {
-    log.Printf("getting block")
-    block, err := conn.Block()
-    if err != nil {
-      log.Fatalf("block reading failed: %v", err)
-    }
-    log.Printf("processing block")
-    blockNum++
-    blockCount := 0
-    for block.Next() {
-      blockCount++
-    }
-    log.Printf("returning block")
-    if err := block.Return(); err != nil {
-      log.Fatalf("block return failed: %v", err)
-    }
-    totalCount += blockCount
-    log.Printf("block %d had %d packets, %d total in %v", blockNum, blockCount, totalCount, time.Since(start))
-  }
+	log.Printf("reading blocks")
+	totalCount := 0
+	blockNum := 0
+	start := time.Now()
+	for {
+		log.Printf("getting block")
+		block, err := conn.Block()
+		if err != nil {
+			log.Fatalf("block reading failed: %v", err)
+		}
+		log.Printf("processing block")
+		blockNum++
+		blockCount := 0
+		for block.Next() {
+			blockCount++
+		}
+		log.Printf("returning block")
+		if err := block.Return(); err != nil {
+			log.Fatalf("block return failed: %v", err)
+		}
+		totalCount += blockCount
+		log.Printf("block %d had %d packets, %d total in %v", blockNum, blockCount, totalCount, time.Since(start))
+	}
 }
