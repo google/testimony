@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-all: testimony testimonyd
+all: testimony testimonyd testclient
 
-test: testimony testimonyd testimony_test testimonyd_test
+test: testimony testimonyd testimony_test testimonyd_test testclient_test
 
-clean: testimony_clean testimonyd_clean
+clean: testimony_clean testimonyd_clean testclient_clean
 
 install: testimonyd_install
 
@@ -42,3 +42,12 @@ testimonyd_clean:
 
 testimonyd_install:
 	$(MAKE) -C testimonyd install
+
+testclient:
+	$(MAKE) -C testclient
+
+testclient_test:
+	$(MAKE) -C testclient test
+
+testclient_clean:
+	$(MAKE) -C testclient clean
