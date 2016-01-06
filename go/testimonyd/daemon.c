@@ -95,8 +95,9 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
 
   // MMap the RX_RING to create a packet memory region.
   *ring =
-      mmap(NULL, tp3.tp_block_size * tp3.tp_block_nr, PROT_READ | PROT_WRITE,
-           MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, *fd, 0);
+      mmap(NULL, (size_t) tp3.tp_block_size * tp3.tp_block_nr,
+           PROT_READ | PROT_WRITE, MAP_SHARED | MAP_LOCKED | MAP_NORESERVE,
+           *fd, 0);
   if (*ring == MAP_FAILED) {
     *err = "ring mmap failed";
     errno = EINVAL;
