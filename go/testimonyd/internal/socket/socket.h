@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef __DAEMON_H__
-#define __DAEMON_H__
+#ifndef __SOCKET_H__
+#define __SOCKET_H__
 struct sock_fprog;
 
-// See comments in daemon.cc
+// See comments in socket.cc
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
              int fanout_id, int fanout_type, const struct sock_fprog* filt,
              // Outputs:
              int* fd, void** ring, const char** err);
-#endif
+#endif  // __SOCKET_H__

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package socket
 
-// #include "daemon.h"
+// #include "socket.h"
 // #include <linux/if_packet.h>
 // #include <linux/filter.h>
 // #include <stdlib.h>  // for C.free
@@ -33,6 +33,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+  "github.com/google/testimony/go/testimonyd/internal/vlog"
 )
 
 // socket handles a single AF_PACKET socket.  There will be N Socket objects for
@@ -109,7 +111,7 @@ func (s *socket) getNewBlocks() {
 			time.Sleep(time.Millisecond * 10)
 		}
 		b.ref()
-		v(3, "%v got new block %v", s, b)
+		vlog.V(3, "%v got new block %v", s, b)
 		s.newBlocks <- b
 		blockIndex = (blockIndex + 1) % s.conf.NumBlocks
 	}
@@ -135,7 +137,7 @@ func (s *socket) run() {
 				select {
 				case c.newBlocks <- b:
 				default:
-					v(1, "failed to send %v to %v", b, c)
+					vlog.V(1, "failed to send %v to %v", b, c)
 					b.unref()
 				}
 			}
@@ -168,7 +170,7 @@ func (c *conn) handleReads() {
 		if err == io.EOF {
 			return
 		} else if err != nil || n != len(buf) {
-			v(1, "%v read error (%d bytes): %v", c, n, err)
+			vlog.V(1, "%v read error (%d bytes): %v", c, n, err)
 			return
 		}
 		i := int(binary.BigEndian.Uint32(buf[:]))
@@ -202,7 +204,7 @@ loop:
 			var buf [4]byte
 			binary.BigEndian.PutUint32(buf[:], uint32(b.index))
 			if _, err := c.c.Write(buf[:]); err != nil {
-				v(1, "%v write error for %v: %v", c, b, err)
+				vlog.V(1, "%v write error for %v: %v", c, b, err)
 				break loop
 			}
 		case i := <-c.oldBlocks:
@@ -216,7 +218,7 @@ loop:
 				break loop
 			}
 			b := c.s.blocks[i]
-			v(3, "%v took %v to process block %v", c, time.Since(outstanding[i]), b)
+			vlog.V(3, "%v took %v to process block %v", c, time.Since(outstanding[i]), b)
 			outstanding[i] = time.Time{}
 			b.unref() // MOST IMPORTANT LINE EVER
 		}
@@ -225,11 +227,11 @@ loop:
 	// Close things down.
 	log.Printf("Connection %v closing", c)
 	c.c.Close()
-	v(3, "%v marking self old", c)
+	vlog.V(3, "%v marking self old", c)
 	c.s.oldConns <- c
-	v(3, "%v waiting for reads", c)
+	vlog.V(3, "%v waiting for reads", c)
 	for b := range c.newBlocks {
-		v(3, "%v returning unsent %v", c, b)
+		vlog.V(3, "%v returning unsent %v", c, b)
 		b.unref()
 	}
 	// empty out oldBlocks to allow handleReads to finish, but don't do anything
@@ -240,7 +242,7 @@ loop:
 	for i, t := range outstanding {
 		if !t.IsZero() {
 			b := c.s.blocks[i]
-			v(3, "%v returning outstanding %v after %v", c, b, time.Since(t))
+			vlog.V(3, "%v returning outstanding %v after %v", c, b, time.Since(t))
 			b.unref()
 		}
 	}
@@ -272,14 +274,14 @@ type block struct {
 // ref reference the block.
 func (b *block) ref() {
 	refs := atomic.AddInt32(&b.r, 1)
-	vup(5, 1, "%v refs = %d", b, refs)
+	vlog.VUp(5, 1, "%v refs = %d", b, refs)
 }
 
 // unref dereferences the block.  When the refcount reaches zero, the block is
 // returned to the kernel via clear().
 func (b *block) unref() {
 	refs := atomic.AddInt32(&b.r, -1)
-	vup(5, 1, "%v unref = %d", b, refs)
+	vlog.VUp(5, 1, "%v unref = %d", b, refs)
 	if refs == 0 {
 		b.clear()
 	} else if refs < 0 {
@@ -302,7 +304,7 @@ func (b *block) cblock() *C.struct_tpacket_hdr_v1 {
 // clear clears the block's block status, returning the block to the kernel so
 // it can add additional packets.
 func (b *block) clear() {
-	vup(3, 2, "%v clear", b)
+	vlog.VUp(3, 2, "%v clear", b)
 	b.cblock().block_status = 0
 }
 

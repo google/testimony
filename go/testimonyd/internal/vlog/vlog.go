@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package main
+package vlog
 
 import (
 	"flag"
@@ -23,14 +23,14 @@ import (
 
 var verbose = flag.Int("v", 0, "Verbose logging, increase for more logs")
 
-// v logs a message based on the --v command line flag.
-func v(level int, format string, args ...interface{}) {
-	vup(level, 1, format, args...)
+// V logs a message based on the --v command line flag.
+func V(level int, format string, args ...interface{}) {
+	VUp(level, 1, format, args...)
 }
 
-// vup logs a message based on the --v command line flag, using the n'th
+// Vup logs a message based on the --v command line flag, using the n'th
 // caller's file/line number instead of this one.
-func vup(level int, caller int, format string, args ...interface{}) {
+func VUp(level int, caller int, format string, args ...interface{}) {
 	if level <= *verbose {
 		_, file, line, _ := runtime.Caller(caller + 1)
 		args = append([]interface{}{filepath.Base(file), line}, args...)
