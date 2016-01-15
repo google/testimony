@@ -16,7 +16,6 @@ package socket
 
 import (
 	"encoding/binary"
-	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -26,11 +25,6 @@ import (
 	"syscall"
 
   "github.com/google/testimony/go/testimonyd/internal/vlog"
-)
-
-var (
-	confFilename = flag.String("config", "/etc/testimony.conf", "Testimony config")
-	logToSyslog  = flag.Bool("syslog", true, "log messages to syslog")
 )
 
 // Testimony is the configuration parsed from the config file.
