@@ -17,6 +17,7 @@ RANLIB=ranlib
 CC=gcc
 CFLAGS=-fPIC -Wall -g -O2 -I. -fno-strict-aliasing
 LDFLAGS=
+SHELL=/bin/bash
 
 all: libtestimony.a libtestimony.so testimony_client
 
