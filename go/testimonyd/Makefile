@@ -21,7 +21,7 @@ all: testimonyd
 clean:
 	rm -rf testimonyd
 
-testimonyd: internal/*/*
+testimonyd: *.go internal/*/*
 	$(GO) build -o testimonyd
 
 install: testimonyd

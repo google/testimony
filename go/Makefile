@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-all: testimony testimonyd testclient
+all: testimony testimonyd buildtestclient
 
 test: testimony testimonyd testimony_test testimonyd_test testclient_test
 
@@ -43,7 +43,7 @@ testimonyd_clean:
 testimonyd_install:
 	$(MAKE) -C testimonyd install
 
-testclient:
+buildtestclient:
 	$(MAKE) -C testclient
 
 testclient_test:

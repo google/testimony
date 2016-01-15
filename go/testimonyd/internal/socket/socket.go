@@ -23,7 +23,7 @@ struct sock_fprog;
 
 // See comments in socket.cc
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
-             int fanout_id, int fanout_type, const struct sock_fprog* filt,
+             int fanout_id, int fanout_size, int fanout_type, const struct sock_fprog* filt,
              // Outputs:
              int* fd, void** ring, const char** err);
 */
@@ -43,7 +43,7 @@ import (
 	"time"
 	"unsafe"
 
-  "github.com/google/testimony/go/testimonyd/internal/vlog"
+	"github.com/google/testimony/go/testimonyd/internal/vlog"
 )
 
 // socket handles a single AF_PACKET socket.  There will be N Socket objects for
@@ -95,7 +95,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*socket, error) {
 	var ring unsafe.Pointer
 	var errStr *C.char
 	if _, err := C.AFPacket(iface, C.int(sc.BlockSize), C.int(sc.NumBlocks),
-		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutType), filt,
+		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutSize), C.int(sc.FanoutType), filt,
 		&fd, &ring, &errStr); err != nil {
 		return nil, fmt.Errorf("C AFPacket call failed: %v: %v", C.GoString(errStr), err)
 	}

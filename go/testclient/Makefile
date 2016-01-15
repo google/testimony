@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-all:
-	go build
+all: *.go
+	go build -o testclient
 
 test:
 	go test
 
 clean:
+	rm -f testclient
 
 .PHONY: all clean

@@ -23,7 +23,7 @@ import (
 	"log/syslog"
 	"syscall"
 
-  "github.com/google/testimony/go/testimonyd/internal/socket"
+	"github.com/google/testimony/go/testimonyd/internal/socket"
 )
 
 var (

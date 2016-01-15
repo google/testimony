@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"syscall"
 
-  "github.com/google/testimony/go/testimonyd/internal/vlog"
+	"github.com/google/testimony/go/testimonyd/internal/vlog"
 )
 
 // Testimony is the configuration parsed from the config file.

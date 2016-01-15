@@ -219,3 +219,12 @@ func (b *Block) Next() bool {
 func (b *Block) Packet() *C.struct_tpacket3_hdr {
 	return b.pkt
 }
+
+// PacketData provides access to the current packet's data.
+func (b *Block) PacketData() []byte {
+	if b.pkt == nil {
+		return nil
+	}
+	start := b.offset + int(b.pkt.tp_mac)
+	return b.B[start : start+int(b.pkt.tp_snaplen)]
+}

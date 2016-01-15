@@ -34,7 +34,7 @@
 // pointing to the mmap'd region of that socket, and any error message.
 // Returns zero on success, on error returns -1 and sets errno.
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
-             int fanout_id, int fanout_type, const struct sock_fprog* filter,
+             int fanout_id, int fanout_size, int fanout_type, const struct sock_fprog* filter,
              // outputs:
              int* fd, void** ring, const char** err) {
   // Set up the initial socket.
@@ -122,11 +122,14 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
   }
 
   // Set up fanout.
-  int fanout = (fanout_id & 0xFFFF) | (fanout_type << 16);
-  r = setsockopt(*fd, SOL_PACKET, PACKET_FANOUT, &fanout, sizeof(fanout));
-  if (r < 0) {
-    *err = "setsockopt PACKET_FANOUT failed";
-    goto fail2;
+  // If fanout size is 1, there's no point in trying to set fanout.
+  if (fanout_size != 1) {
+    int fanout = (fanout_id & 0xFFFF) | (fanout_type << 16);
+    r = setsockopt(*fd, SOL_PACKET, PACKET_FANOUT, &fanout, sizeof(fanout));
+    if (r < 0) {
+      *err = "setsockopt PACKET_FANOUT failed";
+      goto fail2;
+    }
   }
   return 0;
 
