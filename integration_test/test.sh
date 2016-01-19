@@ -35,7 +35,12 @@ function Error {
   Log "\e[41m" "$@"
 }
 function Die {
-  Error "$@"; exit 1
+  Error "$@"
+  for file in `find $DIR -type f | sort`; do
+    Info "$DIR/$file"
+    cat $file
+  done
+  exit 1
 }
 
 Info "Testing sudo access"
@@ -84,7 +89,7 @@ sleep 1
 sudo kill -0 $CLIENT_PIDS || Die "Client not running"
 
 Info "Sending packets to $DUMMY"
-sudo tcpreplay -i $DUMMY --topspeed $BASEDIR/steno_integration_test.pcap
+sudo tcpreplay -i $DUMMY --topspeed test.pcap
 sleep 2
 
 Info "Turning off client"
