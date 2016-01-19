@@ -223,7 +223,7 @@ int testimony_init(testimony t) {
   }
 
   t->ring = mmap(NULL, t->conn.block_size * t->conn.block_nr, PROT_READ,
-                 MAP_SHARED | MAP_LOCKED | MAP_NORESERVE, t->afpacket_fd, 0);
+                 MAP_SHARED | MAP_NORESERVE, t->afpacket_fd, 0);
   if (t->ring == MAP_FAILED) {
     t->ring = 0;
     TERR("local mmap of file descriptor failed");

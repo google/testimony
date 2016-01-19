@@ -42,6 +42,9 @@ function Die {
   done
   exit 1
 }
+function Kill {
+  sudo kill "$@" && sleep 1 && (sudo kill -9 "$@" || true)
+}
 
 Info "Testing sudo access"
 sudo cat /dev/null
@@ -93,9 +96,9 @@ sudo tcpreplay -i $DUMMY --topspeed test.pcap
 sleep 2
 
 Info "Turning off client"
-sudo kill $CLIENT_PIDS || Info "Failed to stop client, expected"
+Kill $CLIENT_PIDS || Info "Failed to stop client, expected"
 Info "Turning off daemon"
-sudo kill $DAEMON_PID || Error "Failed to stop daemon"
+Kill $DAEMON_PID || Error "Failed to stop daemon"
 
 Info "Testing client output"
 for i in {1..10}; do

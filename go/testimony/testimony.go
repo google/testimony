@@ -157,7 +157,7 @@ func (t *Conn) Init(fanoutIndex int) (err error) {
 	} else {
 		t.fd = fds[0]
 	}
-	if t.ring, err = syscall.Mmap(t.fd, 0, t.blockSize*t.numBlocks, syscall.PROT_READ, syscall.MAP_SHARED|syscall.MAP_LOCKED|syscall.MAP_NORESERVE); err != nil {
+	if t.ring, err = syscall.Mmap(t.fd, 0, t.blockSize*t.numBlocks, syscall.PROT_READ, syscall.MAP_SHARED|syscall.MAP_NORESERVE); err != nil {
 		return fmt.Errorf("mmap failed: %v", err)
 	}
 	return nil
