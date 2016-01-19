@@ -6,4 +6,4 @@ before_install:
   - sudo apt-get install tcpreplay
 script:
   - go test ./...
-  - bash integration_test/test.sh
+  - DUMMY=dummy1 bash integration_test/test.sh
