@@ -39,8 +39,6 @@ struct testimony_internal {
   char errbuf[TESTIMONY_ERRBUF_SIZE];
 };
 
-static const char kProtocolVersion = 1;
-
 static uint32_t get_be_32(uint8_t* a) {
 #define LSH(x, n) (((uint32_t)x) << n)
   return LSH(a[0], 24) | LSH(a[1], 16) | LSH(a[2], 8) | a[3];
@@ -169,7 +167,7 @@ int testimony_connect(testimony* tp, const char* socket_name) {
   if (r < 0) {
     TERR("recv of protocol version failed");
     goto fail;
-  } else if (version != kProtocolVersion) {
+  } else if (version != TESTIMONY_VERSION) {
     TERR("received unsupported protocol version %d", version);
     errno = EPROTONOSUPPORT;
     goto fail;
