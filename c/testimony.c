@@ -203,7 +203,7 @@ testimony_connection* testimony_conn(testimony t) { return &t->conn; }
 
 int testimony_init(testimony t) {
   uint8_t msg[4];
-  int r, err;
+  int r;
   if (t->ring) {
     TERR("testimony has already been initiated");
     return -EINVAL;
@@ -212,13 +212,13 @@ int testimony_init(testimony t) {
   r = send(t->sock_fd, &msg, sizeof(msg), 0);
   if (r < 0) {
     TERR("send of fanout index failed");
-    goto fail;
+    return -EIO;
   }
 
   t->afpacket_fd = recv_file_descriptor(t->sock_fd);
   if (t->afpacket_fd < 0) {
     TERR("recv of file descriptor failed");
-    goto fail;
+    return -EIO;
   }
 
   // calloc inits memory to zero
@@ -229,15 +229,9 @@ int testimony_init(testimony t) {
   if (t->ring == MAP_FAILED) {
     t->ring = 0;
     TERR("local mmap of file descriptor failed");
-    errno = EINVAL;
-    goto fail;
+    return -EINVAL;
   }
   return 0;
-
-fail:
-  err = errno;
-  testimony_close(t);
-  return -err;
 }
 
 int testimony_close(testimony t) {
@@ -287,12 +281,14 @@ int testimony_get_block(testimony t, int timeout_millis,
   }
   *block =
       (struct tpacket_block_desc*)(t->ring + t->conn.block_size * blockidx);
+#ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   if ((old_count = __sync_val_compare_and_swap(
       t->block_counts + blockidx, 0, (*block)->hdr.bh1.num_pkts)) != 0) {
     TERR("block count CAS failed for block %d, current count %d != 0",
          (int)blockidx, (int)old_count);
     return -EIO;
   }
+#endif
   return 0;
 }
 
@@ -317,6 +313,7 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
     TERR("block does not appear to have come from this testimony instance");
     return -EINVAL;
   }
+#ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   // Set block count for this block to zero (& with 0), and make sure the packet
   // count was sane.
   old_count = __sync_fetch_and_and(t->block_counts + blockidx, 0);
@@ -325,6 +322,7 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
          "testimony_return_packet were both called?");
     return -EINVAL;
   }
+#endif
   r = send_be_32(t->sock_fd, blockidx);
   if (r < 0) {
     TERR("send of block index failed");
@@ -334,6 +332,7 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
 }
 
 int testimony_return_packet(testimony t, struct tpacket_block_desc* block) {
+#ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   uint32_t blockidx = testimony_block_index(t, block);
   if (blockidx == kInvalidBlockIndex) {
     TERR("block does not appear to have come from this testimony instance");
@@ -343,6 +342,11 @@ int testimony_return_packet(testimony t, struct tpacket_block_desc* block) {
     return testimony_return_block(t, block);
   }
   return 0;
+#else
+  TERR("compiler does not support atomics, "
+       "testimony_return_packet not available");
+  return -EINVAL;
+#endif
 }
 
 char* testimony_error(testimony t) { return t->errbuf; }

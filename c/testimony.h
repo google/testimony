@@ -62,6 +62,8 @@ typedef struct {
 } testimony_connection;
 
 // Initializes a connection to the testimony server.
+// After a successful call to testimony_connect, testimony_close should be
+// called on t should any future error occur.
 int testimony_connect(testimony* t, const char* socket_name);
 // Requests information about the connection.  This can be called after connect
 // and before init.  All other functions should be called after init.
@@ -71,6 +73,7 @@ testimony_connection* testimony_conn(testimony t);
 char* testimony_error(testimony t);
 // Initiates block reads.  The behavior of this function will change
 // based on modifications the client has made to testimony_conn(t).
+// On error, testimony_error may be called and testimony_close must be.
 int testimony_init(testimony t);
 // Closes a connection to the testimony server.  t should not be reused after
 // this call.
@@ -112,7 +115,7 @@ struct testimony_iter_internal;
 //     struct tpacket_block_desc* block;
 //     CHECK(testimony_get_block(t, 1000, &block) == 0);
 //     if (!block) { continue; }
-//     CHECK(testimony_iter_start(iter, block) == 0);
+//     CHECK(testimony_iter_reset(iter, block) == 0);
 //     struct tpacket3_hdr* packet;
 //     while ((packet = testimony_iter_next(iter)) != NULL) {
 //       handle_packet(packet);
