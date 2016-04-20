@@ -37,7 +37,7 @@ function Error {
 function Die {
   Error "$@"
   for file in `find $DIR -type f | sort`; do
-    Info "$DIR/$file"
+    Info "$file"
     cat $file
   done
   exit 1
@@ -66,7 +66,7 @@ cat > $CONFIG << EOF
     , "BlockTimeoutMillis": 1000
     , "FanoutSize": 1
     , "User": "$(whoami)"
-    , "Filter": ""
+    , "Filter": "host 169.254.1.1 and host 169.254.1.2"
   }
 ]
 EOF
@@ -102,7 +102,7 @@ Kill $DAEMON_PID || Error "Failed to stop daemon"
 
 Info "Testing client output"
 for i in {1..10}; do
-  diff $DIR/out$i test.expected || Die "Output from client $i failed, see $DIR/out$i and $DIR/err$i"
+  diff -Naur $DIR/out$i test.expected || Die "Output from client $i failed, see $DIR/out$i and $DIR/err$i"
 done
 rm -rf $DIR
 sudo ip link delete $DUMMY || Error "Failed to clean up dummy $DUMMY"
