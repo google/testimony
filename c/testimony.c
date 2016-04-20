@@ -37,6 +37,7 @@ struct testimony_internal {
   int afpacket_fd;
   uint8_t* ring;
   char errbuf[TESTIMONY_ERRBUF_SIZE];
+  uint32_t* block_counts;
 };
 
 static uint32_t get_be_32(uint8_t* a) {
@@ -220,6 +221,9 @@ int testimony_init(testimony t) {
     goto fail;
   }
 
+  // calloc inits memory to zero
+  t->block_counts = (uint32_t*)calloc(t->conn.block_nr, sizeof(uint32_t));
+
   t->ring = mmap(NULL, t->conn.block_size * t->conn.block_nr, PROT_READ,
                  MAP_SHARED | MAP_NORESERVE, t->afpacket_fd, 0);
   if (t->ring == MAP_FAILED) {
@@ -242,6 +246,7 @@ int testimony_close(testimony t) {
       return -errno;
   }
   if (close(t->sock_fd) < 0) return -errno;
+  free(t->block_counts);
   free(t);
   return 0;
 }
@@ -249,7 +254,7 @@ int testimony_close(testimony t) {
 int testimony_get_block(testimony t, int timeout_millis,
                         struct tpacket_block_desc** block) {
   struct pollfd pfd;
-  uint32_t blockidx;
+  uint32_t blockidx, old_count;
   int r;
   *block = NULL;
   if (t->sock_fd == 0 || t->ring == 0) {
@@ -282,22 +287,60 @@ int testimony_get_block(testimony t, int timeout_millis,
   }
   *block =
       (struct tpacket_block_desc*)(t->ring + t->conn.block_size * blockidx);
+  if ((old_count = __sync_val_compare_and_swap(
+      t->block_counts + blockidx, 0, (*block)->hdr.bh1.num_pkts)) != 0) {
+    TERR("block count CAS failed for block %d, current count %d != 0",
+         (int)blockidx, (int)old_count);
+    return -EIO;
+  }
   return 0;
 }
 
-int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
-  int r;
+static const uint32_t kInvalidBlockIndex = 0xFFFFFFFF;
+
+static uint32_t testimony_block_index(testimony t, struct tpacket_block_desc* block) {
   size_t blockptr = (size_t)block;
   blockptr -= (size_t)t->ring;
   blockptr /= t->conn.block_size;
   if (blockptr >= t->conn.block_nr) {
     TERR("block does not appear to have come from this testimony instance");
+    return kInvalidBlockIndex;
+  }
+  return blockptr;
+}
+
+int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
+  int r;
+  uint32_t old_count;
+  uint32_t blockidx = testimony_block_index(t, block);
+  if (blockidx == kInvalidBlockIndex) {
+    TERR("block does not appear to have come from this testimony instance");
     return -EINVAL;
   }
-  r = send_be_32(t->sock_fd, blockptr);
+  // Set block count for this block to zero (& with 0), and make sure the packet
+  // count was sane.
+  old_count = __sync_fetch_and_and(t->block_counts + blockidx, 0);
+  if (old_count != 0 && old_count != block->hdr.bh1.num_pkts) {
+    TERR("block count invalid... maybe testimony_return_block and "
+         "testimony_return_packet were both called?");
+    return -EINVAL;
+  }
+  r = send_be_32(t->sock_fd, blockidx);
   if (r < 0) {
     TERR("send of block index failed");
     return -errno;
+  }
+  return 0;
+}
+
+int testimony_return_packet(testimony t, struct tpacket_block_desc* block) {
+  uint32_t blockidx = testimony_block_index(t, block);
+  if (blockidx == kInvalidBlockIndex) {
+    TERR("block does not appear to have come from this testimony instance");
+    return -EINVAL;
+  }
+  if (__sync_sub_and_fetch(t->block_counts + blockidx, 1) == 0) {
+    return testimony_return_block(t, block);
   }
   return 0;
 }

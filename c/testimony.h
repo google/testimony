@@ -45,6 +45,7 @@ struct testimony_internal;
 //   struct tpacket_block_desc* block;
 //   while (x) {
 //     CHECK(testimony_get_block(t, 1000 /* timeout, millis */, &block) == 0);
+//     if (!block) { continue; }
 //     // use block...
 //     CHECK(testimony_return_block(t, block) == 0);
 //   }
@@ -81,6 +82,25 @@ int testimony_get_block(testimony t, int timeout_millis, struct tpacket_block_de
 // Returns a processed block of packets back to testimony.
 int testimony_return_block(testimony t, struct tpacket_block_desc* block);
 
+// testimony_return_packet counts the number of packets processed in a
+// testimony block and auto-returns the block after the Nth call, where N is the
+// number of packets in the given block.
+//
+// Usage:
+//   while (...) {
+//     struct tpacket_block_desc* block;
+//     CHECK(testimony_get_block(t, 1000, &block) == 0);
+//     for (... iterate over packets in block ...) {
+//       ... handle packet in block ...
+//       CHECK(testimony_return_packet(t, block) == 0);
+//     }
+//     // If you call return_packet, do NOT call testimony_return_block.
+//     // Block will automatically be returned after Nth call to
+//     // testimony_return_packet(t, block), where N is the number of
+//     // packets in the block.
+//   }
+int testimony_return_packet(testimony t, struct tpacket_block_desc* block);
+
 struct testimony_iter_internal;
 // testimony_iter provides an easy method for iterating over packets
 // in a tpacket3 block.
@@ -89,12 +109,15 @@ struct testimony_iter_internal;
 //   testimony_iter iter;
 //   CHECK(testimony_iter_init(&iter) == 0);
 //   while (...) {
-//     struct tpacket_block_desc* block = get_block_somehow();
+//     struct tpacket_block_desc* block;
+//     CHECK(testimony_get_block(t, 1000, &block) == 0);
+//     if (!block) { continue; }
 //     CHECK(testimony_iter_start(iter, block) == 0);
 //     struct tpacket3_hdr* packet;
-//     while ((packet = testimony_iter_next(iter) != NULL) {
+//     while ((packet = testimony_iter_next(iter)) != NULL) {
 //       handle_packet(packet);
 //     }
+//     CHECK(testimony_return_block(t, block) == 0);
 //   }
 //   CHECK(testimony_iter_close(iter));
 //
