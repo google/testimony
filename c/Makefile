@@ -29,7 +29,7 @@ clean:
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-testimony_client: testimony_client.o libtestimony.a
+testimony_client: testimony_client.o libtestimony.a libtestimony.so
 	$(CC) -o testimony_client testimony_client.o $(LDFLAGS) -L. -ltestimony
 
 libtestimony.a: testimony.o
