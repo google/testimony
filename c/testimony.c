@@ -338,15 +338,20 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
   return 0;
 }
 
-int testimony_return_packet(testimony t, struct tpacket_block_desc* block) {
+int testimony_return_packets(testimony t, struct tpacket_block_desc* block, uint32_t packets) {
 #ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   uint32_t blockidx = testimony_block_index(t, block);
+  uint32_t count;
   if (blockidx == kInvalidBlockIndex) {
     TERR("block does not appear to have come from this testimony instance");
     return -EINVAL;
   }
-  if (__sync_sub_and_fetch(t->block_counts + blockidx, 1) == 0) {
+  count = __sync_fetch_and_sub(t->block_counts + blockidx, packets);
+  if (count == packets) {
     return testimony_return_block(t, block);
+  } else if (count < packets) {
+    TERR("return_packets amount overflows number of packets");
+    return -EINVAL;
   }
   return 0;
 #else
