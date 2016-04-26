@@ -58,7 +58,10 @@ static int recv_be_32(int fd, uint32_t* out) {
   int r;
   while (writeto < limit) {
     r = recv(fd, writeto, limit - writeto, 0);
-    if (r < 0) {
+    if (r == 0) {
+      errno = ECANCELED;
+      return -1;
+    } else if (r < 0) {
       return -1;
     }
     writeto += r;
@@ -167,6 +170,10 @@ int testimony_connect(testimony* tp, const char* socket_name) {
   r = recv(t->sock_fd, &version, 1, 0);
   if (r < 0) {
     TERR("recv of protocol version failed");
+    goto fail;
+  } else if (r == 0) {
+    TERR("recv closed by server");
+    errno = ECANCELED;
     goto fail;
   } else if (version != TESTIMONY_VERSION) {
     TERR("received unsupported protocol version %d", version);
