@@ -69,7 +69,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*socket, error) {
 		conf:         sc,
 		newConns:     make(chan *net.UnixConn),
 		oldConns:     make(chan *conn),
-		newBlocks:    make(chan *block),
+		newBlocks:    make(chan *block, sc.NumBlocks),
 		currentConns: map[*conn]bool{},
 		blocks:       make([]*block, sc.NumBlocks),
 	}
@@ -118,10 +118,14 @@ func (s *socket) String() string {
 // which the run() method passes to clients.
 func (s *socket) getNewBlocks() {
 	blockIndex := 0
+	sleep := time.Millisecond
 	for {
 		b := s.blocks[blockIndex]
 		for !b.ready() {
-			time.Sleep(time.Millisecond * 10)
+			time.Sleep(sleep)
+			if sleep < time.Second/4 {
+				sleep *= 2
+			}
 		}
 		b.ref()
 		vlog.V(3, "%v got new block %v", s, b)
@@ -206,18 +210,31 @@ func (c *conn) run() {
 	outstanding := make([]time.Time, len(c.s.blocks))
 
 	// Wait for either the reader or writer to stop.
+	var out []byte
 loop:
 	for {
 		select {
 		case b := <-c.newBlocks:
-			if !outstanding[b.index].IsZero() {
-				log.Fatalf("%v received already outstanding block %v", c, b)
+			out = out[:0]
+			vlog.V(2, "%v writing %v", c, b)
+		blockLoop:
+			for {
+				if !outstanding[b.index].IsZero() {
+					log.Fatalf("%v received already outstanding block %v", c, b)
+				}
+				outstanding[b.index] = time.Now()
+				idx := len(out)
+				out = append(out, 0, 0, 0, 0)
+				binary.BigEndian.PutUint32(out[idx:], uint32(b.index))
+				select {
+				case b = <-c.newBlocks:
+					vlog.V(2, "%v batching %v", c, b)
+				default:
+					break blockLoop
+				}
 			}
-			outstanding[b.index] = time.Now()
-			var buf [4]byte
-			binary.BigEndian.PutUint32(buf[:], uint32(b.index))
-			if _, err := c.c.Write(buf[:]); err != nil {
-				vlog.V(1, "%v write error for %v: %v", c, b, err)
+			if _, err := c.c.Write(out); err != nil {
+				vlog.V(1, "%v write error: %v", c, err)
 				break loop
 			}
 		case i := <-c.oldBlocks:
