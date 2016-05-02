@@ -16,38 +16,87 @@
 #include <stdio.h>   // fprintf()
 #include <string.h>  // strerror()
 #include <stdlib.h>  // atoi()
+#include <argp.h>    // argp_parse()
+
+#define SOCKET_BUF_SIZE 256
+char* flag_socket = "/path/to/socket";
+int flag_fanout_index = 0;
+int flag_count = 0;
+int flag_dump = 0;
+
+int ParseOption(int key, char* arg, struct argp_state* state) {
+  switch (key) {
+    case 300:
+      flag_socket = arg; break;
+    case 301:
+      flag_fanout_index = atoi(arg); break;
+    case 302:
+      flag_count = atoi(arg); break;
+    case 303:
+      flag_dump = 1; break;
+  }
+  return 0;
+}
 
 int main(int argc, char** argv) {
-  int r, i;
+  int r;
   struct tpacket_block_desc* block;
+  struct tpacket3_hdr* packet;
+  uint8_t *packet_data;
+  uint8_t *packet_data_limit;
   testimony t;
 
-  if (argc != 2) {
-    fprintf(stderr, "Usage: %s <socket>\n", argv[0]);
-  }
+  const char* s = "STRING";
+  const char* n = "NUM";
+  struct argp_option options[] = {
+    {"socket", 300, s, 0, "Socket to connect to"},
+    {"index", 301, n, 0, "Fanout index to request"},
+    {"count", 302, n, 0, "Number of packets to process before exiting"},
+    {"dump", 303, 0, 0, "Dump packet hex to STDOUT"},
+    {0},
+  };
+  struct argp argp = {options, &ParseOption};
+  argp_parse(&argp, argc, argv, 0, 0, 0);
 
-  printf("Init...\n");
-  r = testimony_connect(&t, argv[1]);
+  fprintf(stderr, "Connecting to '%s'\n", flag_socket);
+  r = testimony_connect(&t, flag_socket);
   if (r < 0) {
     fprintf(stderr, "Error with connect: %s\n", strerror(-r));
     return 1;
   }
+  testimony_conn(t)->fanout_index = flag_fanout_index;
   r = testimony_init(t);
   if (r < 0) {
     fprintf(stderr, "Error with init: %s: %s\n", testimony_error(t),
             strerror(-r));
     return 1;
   }
-  printf("Init complete\n");
-  for (i = 0; i < 5; i++) {
+  fprintf(stderr, "Init complete\n");
+  testimony_iter iter;
+  testimony_iter_init(&iter);
+  while (1) {
     r = testimony_get_block(t, -1, &block);
     if (r < 0) {
       fprintf(stderr, "Error with get: %s: %s\n", testimony_error(t),
               strerror(-r));
       return 1;
     }
-    printf("%d\tgot block %p with %d packets\n", i, block,
-           block->hdr.bh1.num_pkts);
+    fprintf(stderr, "got block %p with %d packets\n", block,
+            block->hdr.bh1.num_pkts);
+    testimony_iter_reset(iter, block);
+    while ((packet = testimony_iter_next(iter)) != NULL) {
+      if (flag_dump) {
+        packet_data = testimony_packet_data(packet);
+        packet_data_limit = packet_data + packet->tp_snaplen;
+        for (; packet_data < packet_data_limit; packet_data++) {
+          printf("%02x", *packet_data);
+        }
+        printf("\n");
+      }
+      if (--flag_count == 0) {
+        goto done;
+      }
+    }
     r = testimony_return_block(t, block);
     if (r < 0) {
       fprintf(stderr, "Error with return: %s: %s\n", testimony_error(t),
@@ -55,6 +104,7 @@ int main(int argc, char** argv) {
       return 1;
     }
   }
+done:
   testimony_close(t);
   return 0;
 }

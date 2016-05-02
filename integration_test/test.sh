@@ -84,8 +84,12 @@ sudo kill -0 $DAEMON_PID || Die "Daemon not running"
 
 Info "Starting clients"
 CLIENT_PIDS=""
-for i in {1..10}; do
-  ../go/testclient/testclient --socket=$SOCKET --hashes --count=10 >$DIR/out$i 2>$DIR/err$i &
+for i in {1..5}; do
+  ../go/testclient/testclient --socket=$SOCKET --dump --count=10 >$DIR/out$i 2>$DIR/err$i &
+  CLIENT_PIDS="$CLIENT_PIDS $!"
+done
+for i in {6..10}; do
+  LD_LIBRARY_PATH=../c ../c/testimony_client --socket=$SOCKET --dump --count=10 >$DIR/out$i 2>$DIR/err$i &
   CLIENT_PIDS="$CLIENT_PIDS $!"
 done
 sleep 1

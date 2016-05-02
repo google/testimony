@@ -16,8 +16,6 @@
 package main
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -29,7 +27,7 @@ import (
 var (
 	socketName = flag.String("socket", "", "Name of testimony socket")
 	fanoutInt  = flag.Int("fanout", 0, "Fanout number, if applicable")
-	hashes     = flag.Bool("hashes", false, "If true, output packet hashes")
+	dump       = flag.Bool("dump", false, "If true, output packet dump as hex")
 	count      = flag.Int("count", -1, "If == 0, number of packets to read in")
 )
 
@@ -64,11 +62,8 @@ func main() {
 				break
 			}
 			*count--
-			if *hashes {
-				var hashBuffer [sha1.Size]byte
-				hasher := sha1.New()
-				hasher.Write(block.PacketData())
-				fmt.Println(hex.EncodeToString(hasher.Sum(hashBuffer[:0])))
+			if *dump {
+				fmt.Printf("%x\n", block.PacketData())
 			}
 			blockCount++
 		}

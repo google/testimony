@@ -30,6 +30,7 @@ extern "C" {
 #endif
 
 #define TESTIMONY_ERRBUF_SIZE 256
+#define TESTIMONY_BUF_SIZE 256
 
 struct testimony_internal {
   testimony_connection conn;
@@ -38,36 +39,16 @@ struct testimony_internal {
   uint8_t* ring;
   char errbuf[TESTIMONY_ERRBUF_SIZE];
   uint32_t* block_counts;
+  uint8_t buf[TESTIMONY_BUF_SIZE];
+  uint8_t* buf_start;
+  uint8_t* buf_limit;
 };
 
-static uint32_t get_be_32(uint8_t* a) {
-#define LSH(x, n) (((uint32_t)x) << n)
-  return LSH(a[0], 24) | LSH(a[1], 16) | LSH(a[2], 8) | a[3];
-#undef LSH
-}
 static void set_be_32(uint8_t* a, uint32_t x) {
   a[0] = x >> 24;
   a[1] = x >> 16;
   a[2] = x >> 8;
   a[3] = x;
-}
-static int recv_be_32(int fd, uint32_t* out) {
-  uint8_t msg[4];
-  uint8_t* writeto = msg;
-  uint8_t* limit = msg + 4;
-  int r;
-  while (writeto < limit) {
-    r = recv(fd, writeto, limit - writeto, 0);
-    if (r == 0) {
-      errno = ECANCELED;
-      return -1;
-    } else if (r < 0) {
-      return -1;
-    }
-    writeto += r;
-  }
-  *out = get_be_32(msg);
-  return 0;
 }
 #define TERR(msg, ...)                                              \
   do {                                                              \
@@ -75,6 +56,43 @@ static int recv_be_32(int fd, uint32_t* out) {
     snprintf(t->errbuf, TESTIMONY_ERRBUF_SIZE, msg, ##__VA_ARGS__); \
     errno = err;                                                    \
   } while (0)
+static int recv_t(testimony t, uint8_t* out, size_t s) {
+  int r;
+  uint8_t* out_limit = out + s;
+  size_t to_copy_out, to_copy_buf, to_copy;
+  while (out < out_limit) {
+    while (t->buf_start >= t->buf_limit) {
+      t->buf_start = t->buf;
+      t->buf_limit = t->buf;
+      r = recv(t->sock_fd, t->buf_start, TESTIMONY_BUF_SIZE, 0);
+      if (r == 0) {
+        errno = ECANCELED;
+        return -1;
+      } else if (r < 0) {
+        return -1;
+      }
+      t->buf_limit = t->buf_start + r;
+    }
+    to_copy_out = out_limit - out;
+    to_copy_buf = t->buf_limit - t->buf_start;
+    to_copy = to_copy_out < to_copy_buf ? to_copy_out : to_copy_buf;
+    memcpy(out, t->buf_start, to_copy);
+    out += to_copy;
+    t->buf_start += to_copy;
+  }
+  return 0;
+}
+static int recv_be_32(testimony t, uint32_t* out) {
+  uint8_t msg[4];
+  int r, i;
+  r = recv_t(t, msg, 4);
+  if (r < 0) { return r; }
+  *out = 0;
+  for (i = 0; i < 4; i++) {
+    *out = (*out << 8) + msg[i];
+  }
+  return 0;
+}
 
 static int send_be_32(int fd, size_t in) {
   uint8_t msg[4];
@@ -167,32 +185,28 @@ int testimony_connect(testimony* tp, const char* socket_name) {
     TERR("connect to '%s' failed", saddr.sun_path);
     goto fail;
   }
-  r = recv(t->sock_fd, &version, 1, 0);
+  r = recv_t(t, &version, 1);
   if (r < 0) {
     TERR("recv of protocol version failed");
-    goto fail;
-  } else if (r == 0) {
-    TERR("recv closed by server");
-    errno = ECANCELED;
     goto fail;
   } else if (version != TESTIMONY_VERSION) {
     TERR("received unsupported protocol version %d", version);
     errno = EPROTONOSUPPORT;
     goto fail;
   }
-  r = recv_be_32(t->sock_fd, &msg);
+  r = recv_be_32(t, &msg);
   if (r < 0) {
     TERR("did not receive fanout size");
     goto fail;
   }
   t->conn.fanout_size = msg;
-  r = recv_be_32(t->sock_fd, &msg);
+  r = recv_be_32(t, &msg);
   if (r < 0) {
     TERR("did not receive block size");
     goto fail;
   }
   t->conn.block_size = msg;
-  r = recv_be_32(t->sock_fd, &msg);
+  r = recv_be_32(t, &msg);
   if (r < 0) {
     TERR("did not receive number of blocks");
     goto fail;
@@ -276,7 +290,7 @@ int testimony_get_block(testimony t, int timeout_millis,
     }
     // A read is ready, fall through.
   }
-  r = recv_be_32(t->sock_fd, &blockidx);
+  r = recv_be_32(t, &blockidx);
   if (r < 0) {
     TERR("recv of block index failed");
     return -errno;
