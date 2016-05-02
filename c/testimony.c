@@ -152,7 +152,8 @@ static int recv_file_descriptor(int socket) {
 }
 
 int testimony_connect(testimony* tp, const char* socket_name) {
-  struct sockaddr_un saddr, laddr;
+  struct sockaddr_un saddr;
+  sa_family_t laddr = AF_UNIX;  // Use unnamed socket on client side
   int r, err;
   uint8_t version;
   uint32_t msg;
@@ -171,12 +172,9 @@ int testimony_connect(testimony* tp, const char* socket_name) {
     TERR("socket creation failed");
     goto fail;
   }
-  // TODO(gconnell):  Don't use tmpnam here... figure out how to use mkstemp.
-  laddr.sun_family = AF_UNIX;
-  strcpy(laddr.sun_path, tmpnam(NULL));
   r = bind(t->sock_fd, (struct sockaddr*)&laddr, sizeof(laddr));
   if (r < 0) {
-    TERR("bind to '%s' failed", laddr.sun_path);
+    TERR("bind failed");
     goto fail;
   }
 
