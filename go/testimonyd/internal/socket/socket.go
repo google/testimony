@@ -23,7 +23,8 @@ struct sock_fprog;
 
 // See comments in socket.cc
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
-             int fanout_id, int fanout_size, int fanout_type, const struct sock_fprog* filt,
+             int fanout_id, int fanout_size, int fanout_type,
+             int filter_size, struct sock_filter* filters,
              // Outputs:
              int* fd, void** ring, const char** err);
 */
@@ -74,13 +75,15 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*socket, error) {
 	}
 
 	// Compile the BPF filter, if it was requested.
-	var filt *C.struct_sock_fprog
+	var filt *C.struct_sock_filter
+	var filtsize C.int
 	if sc.Filter != "" {
 		f, err := compileFilter(sc.Interface, sc.Filter)
 		if err != nil {
 			return nil, fmt.Errorf("unable to compile filter %q on interface %q: %v", sc.Filter, sc.Interface, err)
 		}
-		filt = &f.filt
+		filt = &f[0]
+		filtsize = C.int(len(f))
 	}
 
 	// Set up block objects, used to reference count blocks for clients.
@@ -95,7 +98,8 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*socket, error) {
 	var ring unsafe.Pointer
 	var errStr *C.char
 	if _, err := C.AFPacket(iface, C.int(sc.BlockSize), C.int(sc.NumBlocks),
-		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutSize), C.int(sc.FanoutType), filt,
+		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutSize), C.int(sc.FanoutType),
+		filtsize, filt,
 		&fd, &ring, &errStr); err != nil {
 		return nil, fmt.Errorf("C AFPacket call failed: %v: %v", C.GoString(errStr), err)
 	}
@@ -323,14 +327,8 @@ func (b *block) ready() bool {
 	return atomic.LoadInt32(&b.r) == 0 && b.cblock().block_status != 0
 }
 
-// filter wraps a C BPF filter.
-type filter struct {
-	bpfs []C.struct_sock_filter
-	filt C.struct_sock_fprog
-}
-
 // compileFilter compiles a BPF filter, currently by calling tcpdump externally.
-func compileFilter(iface, filt string) (*filter, error) {
+func compileFilter(iface, filt string) ([]C.struct_sock_filter, error) {
 	cmd := exec.Command("/usr/sbin/tcpdump", "-i", iface, "-ddd", filt)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -350,17 +348,15 @@ func compileFilter(iface, filt string) (*filter, error) {
 	if len(ints) == 0 || len(ints) != ints[0]*4+1 {
 		return nil, fmt.Errorf("invalid length of tcpdump ints")
 	}
-	f := &filter{}
 	ints = ints[1:]
+	var bpfs []C.struct_sock_filter
 	for i := 0; i < len(ints); i += 4 {
-		f.bpfs = append(f.bpfs, C.struct_sock_filter{
+		bpfs = append(bpfs, C.struct_sock_filter{
 			code: C.__u16(ints[i]),
 			jt:   C.__u8(ints[i+1]),
 			jf:   C.__u8(ints[i+2]),
 			k:    C.__u32(ints[i+3]),
 		})
 	}
-	f.filt.len = C.ushort(len(f.bpfs))
-	f.filt.filter = (*C.struct_sock_filter)(unsafe.Pointer(&f.bpfs[0]))
-	return f, nil
+	return bpfs, nil
 }

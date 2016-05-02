@@ -34,7 +34,8 @@
 // pointing to the mmap'd region of that socket, and any error message.
 // Returns zero on success, on error returns -1 and sets errno.
 int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
-             int fanout_id, int fanout_size, int fanout_type, const struct sock_fprog* filter,
+             int fanout_id, int fanout_size, int fanout_type,
+             int filter_size, struct sock_filter* filters,
              // outputs:
              int* fd, void** ring, const char** err) {
   // Set up the initial socket.
@@ -53,9 +54,13 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
   }
 
   // If requested, set up and lock a BPF filter on the socket.
-  if (filter) {
+  if (filter_size) {
 #if defined(SO_ATTACH_FILTER) && defined(SO_LOCK_FILTER)
-    r = setsockopt(*fd, SOL_SOCKET, SO_ATTACH_FILTER, filter, sizeof(*filter));
+    struct sock_fprog filter;
+    filter.filter = filters;
+    filter.len = filter_size;
+
+    r = setsockopt(*fd, SOL_SOCKET, SO_ATTACH_FILTER, &filter, sizeof(filter));
     if (r < 0) {
       *err = "setsockopt SO_ATTACH_FILTER error";
       goto fail1;
