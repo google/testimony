@@ -24,14 +24,17 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"syscall"
 	"unsafe"
+
+	"github.com/google/testimony/go/protocol"
 )
 
-const protocolVersion = 1
+const protocolVersion = 2
 
 func localSocketName() string {
 	var randbytes [8]byte
@@ -110,16 +113,51 @@ func Connect(socketname string) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error connecting: %v", err)
 	}
-	var initial [13]byte
-	if n, err := t.c.Read(initial[:]); err != nil || n != len(initial) {
+	var version [1]byte
+	if _, err := io.ReadFull(t.c, version[:]); err != nil {
 		return nil, fmt.Errorf("error reading initial byte: %v", err)
-	} else if initial[0] != protocolVersion {
-		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, initial[0])
+	} else if version[0] != protocolVersion {
+		return nil, fmt.Errorf("protocol mismatch, want %v got %v", protocolVersion, version[0])
 	}
-	_ = int(binary.BigEndian.Uint32(initial[1:]))
-	t.fanoutSize = int(binary.BigEndian.Uint32(initial[1:]))
-	t.blockSize = int(binary.BigEndian.Uint32(initial[5:]))
-	t.numBlocks = int(binary.BigEndian.Uint32(initial[9:]))
+	var buf [4]byte
+tlvLoop:
+	for {
+		if _, err := io.ReadFull(t.c, buf[:]); err != nil {
+			return nil, fmt.Errorf("reading initial TLV: %v", err)
+		}
+		typ, length := protocol.TLFrom(binary.BigEndian.Uint32(buf[:]))
+		if protocol.TypeOf(typ) != protocol.TypeServerToClient {
+			return nil, fmt.Errorf("bad initial type %d", typ)
+		}
+		val := make([]byte, int(length))
+		if _, err := io.ReadFull(t.c, val); err != nil {
+			return nil, fmt.Errorf("reading initial val: %v", err)
+		}
+		switch typ {
+		case protocol.TypeWaitingForFanoutIndex:
+			break tlvLoop
+		case protocol.TypeFanoutSize:
+			if length != 4 {
+				return nil, fmt.Errorf("invalid fanout size length %d", length)
+			}
+			t.fanoutSize = int(binary.BigEndian.Uint32(val))
+		case protocol.TypeBlockSize:
+			if length != 4 {
+				return nil, fmt.Errorf("invalid block size length %d", length)
+			}
+			t.blockSize = int(binary.BigEndian.Uint32(val))
+		case protocol.TypeNumBlocks:
+			if length != 4 {
+				return nil, fmt.Errorf("invalid num blocks length %d", length)
+			}
+			t.numBlocks = int(binary.BigEndian.Uint32(val))
+		default:
+			// ignore
+		}
+	}
+	if t.fanoutSize <= 0 || t.blockSize <= 0 || t.numBlocks <= 0 {
+		return nil, fmt.Errorf("missing fanout/block size or num blocks")
+	}
 	done = true
 	return t, nil
 }
@@ -131,10 +169,8 @@ func (t *Conn) Init(fanoutIndex int) (err error) {
 			t.Close()
 		}
 	}()
-	var fanoutNum [4]byte
-	binary.BigEndian.PutUint32(fanoutNum[:], uint32(fanoutIndex))
-	if _, err := t.c.Write(fanoutNum[:]); err != nil {
-		return fmt.Errorf("error writing initial request: %v", err)
+	if err := protocol.SendUint32(t.c, protocol.TypeFanoutIndex, uint32(fanoutIndex)); err != nil {
+		return fmt.Errorf("error writing fanout index: %v", err)
 	}
 	var msg [1]byte
 	var oob [1024]byte
@@ -165,11 +201,27 @@ func (t *Conn) Init(fanoutIndex int) (err error) {
 
 // Block gets the next block of packets from testimonyd.
 func (t *Conn) Block() (*Block, error) {
-	var m [4]byte
-	if n, err := t.c.Read(m[:]); err != nil || n != len(m) {
-		return nil, fmt.Errorf("error reading block index: %v", err)
+	var idx int
+readLoop:
+	for {
+		var m [4]byte
+		if _, err := io.ReadFull(t.c, m[:]); err != nil {
+			return nil, fmt.Errorf("error reading block index: %v", err)
+		}
+		num := binary.BigEndian.Uint32(m[:])
+		typ, length := protocol.TLFrom(num)
+		switch protocol.TypeOf(typ) {
+		case protocol.TypeBlockIndex:
+			idx = int(num)
+			break readLoop
+		case protocol.TypeServerToClient:
+			if _, err := io.ReadFull(t.c, make([]byte, int(length))); err != nil {
+				return nil, fmt.Errorf("error reading type %d value of length %d: %v", typ, length, err)
+			}
+		default:
+			return nil, fmt.Errorf("received non-server-to-client message: %d", typ)
+		}
 	}
-	idx := int(binary.BigEndian.Uint32(m[:]))
 	if idx < 0 || idx >= t.numBlocks {
 		return nil, fmt.Errorf("read invalid index %d", idx)
 	}

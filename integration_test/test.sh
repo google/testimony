@@ -89,7 +89,7 @@ for i in {1..5}; do
   CLIENT_PIDS="$CLIENT_PIDS $!"
 done
 for i in {6..10}; do
-  LD_LIBRARY_PATH=../c ../c/testimony_client --socket=$SOCKET --dump --count=10 >$DIR/out$i 2>$DIR/err$i &
+  LD_LIBRARY_PATH=../c strace -e recvfrom,sendto -o $DIR/strace$i ../c/testimony_client --socket=$SOCKET --dump --count=10 >$DIR/out$i 2>$DIR/err$i &
   CLIENT_PIDS="$CLIENT_PIDS $!"
 done
 sleep 1
