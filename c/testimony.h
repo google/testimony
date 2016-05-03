@@ -15,7 +15,7 @@
 #ifndef __TESTIMONY_H__
 #define __TESTIMONY_H__
 
-#define TESTIMONY_VERSION 1  // Current highest supported protocol version.
+#define TESTIMONY_VERSION 2  // Current highest supported protocol version.
 
 #include <linux/if_packet.h>  // tpacket_block_desc, tpacket3_hdr
 #include <stdint.h>  // int64_t, uint8_t

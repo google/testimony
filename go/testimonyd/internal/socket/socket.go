@@ -44,6 +44,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/google/testimony/go/protocol"
 	"github.com/google/testimony/go/testimonyd/internal/vlog"
 )
 
@@ -190,15 +191,40 @@ func (c *conn) handleReads() {
 			vlog.V(1, "%v read error (%d bytes): %v", c, n, err)
 			return
 		}
-		i := int(binary.BigEndian.Uint32(buf[:]))
-		if i < 0 || i >= c.s.conf.NumBlocks {
-			log.Printf("%v got invalid block %d", c, i)
-			return
+		num := binary.BigEndian.Uint32(buf[:])
+		if num&0x80000000 != 0 {
+			typ, length := protocol.TLFrom(num)
+			if protocol.TypeOf(typ) != protocol.TypeClientToServer {
+				vlog.V(1, "%v client sent bad type %d", c, typ)
+			}
+			var val []byte
+			if length != 0 {
+				val = make([]byte, length)
+				if _, err := io.ReadFull(c.c, val); err != nil {
+					vlog.V(1, "%v read TLV %d length %d: %v", c, typ, length, err)
+					return
+				}
+			}
+			if err := c.handleTLV(typ, val); err != nil {
+				vlog.V(1, "%v handling type %d: %v", c, typ, val)
+				return
+			}
+		} else {
+			i := int(num)
+			if i < 0 || i >= c.s.conf.NumBlocks {
+				log.Printf("%v got invalid block %d", c, i)
+				return
+			}
+			// We add one to the returned int so we can detect a closed channel (which
+			// returns 0, the zero-value for ints).
+			c.oldBlocks <- i + 1
 		}
-		// We add one to the returned int so we can detect a closed channel (which
-		// returns 0, the zero-value for ints).
-		c.oldBlocks <- i + 1
 	}
+}
+
+func (c *conn) handleTLV(typ protocol.Type, val []byte) error {
+	log.Printf("IGNORING TLV: %d = %x", typ, val)
+	return nil
 }
 
 // run handles communicating with a single external client via a single

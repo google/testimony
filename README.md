@@ -64,34 +64,40 @@ these configuration options:
 ### Wire Protocol ###
 
 Testimony uses an extremely simple wire protocol for establishing client
-connections and passing memory regions back and forth:
+connections and passing memory regions back and forth.
+
+Most values are passed as TLV, in the form:
+
+```
+| 0 | 1 | 2 | 3 | 4 | 5 | 6 | ... |
+| type  | len   | value ....      |
+```
+
+Where type and length are big-endian uint32, and value is a set of bytes `len`
+bytes long.  The type will always have its highest-order bit set, to
+differentiate between a TLV and a block index.
 
     SERVER                                              CLIENT
     ------                                              ------
              <-- initial connection ---
-             --- version byte (1 byte == 1) --->
-             --- fanout size (4BE) -->
-             --- block size (4BE) -->
-             --- number of blocks (4BE) -->
-             <-- fanout number [0-FanoutSize) (4BE) ---
+             --- version byte (1 byte == 2) --->
+             --- fanout size, block size, num blocks -->
+             --- waiting for fanout index -->
+             <-- fanout index ---
              --- socket FD, + 1 dummy byte (ignored) -->
 
               At this point, the client is connected.
-              All other communication is one of the
-              following 2 possibilities:
 
              --- block index for client (4BE) -->
              <-- block index to return (4BE) ---
 
-Most communication is 4-byte "packets" (4BE above means 4 bytes, big endian).
-Pne excepion is the message that sends the socket FD from server to client.
-That contains the FD itself, as well as 8 bytes, representing the block size
-and number of blocks both 4BE as well.
+Post-connection, most communication is 4-byte block indexes passed back
+and forth.  At any time post-connection, either the server or client may
+send arbitrary TLV values across the wire... the other side should handle
+them if it knows how and ignore them if it doesn't.
 
-Once communication is established, server and client simply exchange block
-indexes.  The server sends a block index to the client when that block is
+The server sends a block index to the client when that block is
 available to process (and it references the block internally).  The client
 returns the block index to the server when it's done processing it, and the
-client unrefs that block.  When a block has no more references, it is returned
+server unrefs that block.  When a block has no more references, it is returned
 to the kernel to be refilled with packets.
-

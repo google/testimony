@@ -17,6 +17,7 @@ package socket
 import (
 	"encoding/binary"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -24,13 +25,14 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/google/testimony/go/protocol"
 	"github.com/google/testimony/go/testimonyd/internal/vlog"
 )
 
 // Testimony is the configuration parsed from the config file.
 type Testimony []SocketConfig
 
-const protocolVersion = 1
+const protocolVersion = 2
 
 // SocketConfig defines how an individual socket should be set up.
 type SocketConfig struct {
@@ -128,21 +130,40 @@ func (t Testimony) handle(socks []*socket, c *net.UnixConn) {
 		}
 	}()
 	log.Printf("Received new connection %v", c.RemoteAddr())
-	var buf [13]byte
-	buf[0] = protocolVersion
-	binary.BigEndian.PutUint32(buf[1:], uint32(len(socks)))
-	binary.BigEndian.PutUint32(buf[5:], uint32(socks[0].conf.BlockSize))
-	binary.BigEndian.PutUint32(buf[9:], uint32(socks[0].conf.NumBlocks))
-	if _, err := c.Write(buf[:]); err != nil {
+	var version [1]byte
+	version[0] = protocolVersion
+	if _, err := c.Write(version[:]); err != nil {
 		log.Printf("new conn failed to write version: %v", err)
 		return
 	}
-	var fanoutMsg [4]byte
-	if n, err := c.Read(fanoutMsg[:]); n != len(fanoutMsg) || err != nil {
-		log.Printf("new conn failed to read conf: %v", err)
+	conf := socks[0].conf
+	if err := protocol.SendUint32(c, protocol.TypeFanoutSize, uint32(len(socks))); err != nil {
+		log.Printf("new conn failed to send fanout size: %v", err)
 		return
 	}
-	idx := int(binary.BigEndian.Uint32(fanoutMsg[:]))
+	if err := protocol.SendUint32(c, protocol.TypeBlockSize, uint32(conf.BlockSize)); err != nil {
+		log.Printf("new conn failed to send block size: %v", err)
+		return
+	}
+	if err := protocol.SendUint32(c, protocol.TypeNumBlocks, uint32(conf.NumBlocks)); err != nil {
+		log.Printf("new conn failed to send number of blocks: %v", err)
+		return
+	}
+	if err := protocol.SendType(c, protocol.TypeWaitingForFanoutIndex); err != nil {
+		log.Printf("new conn failed to send wait: %v", err)
+		return
+	}
+	var fanoutMsg [8]byte
+	if _, err := io.ReadFull(c, fanoutMsg[:]); err != nil {
+		log.Printf("new conn failed to read fanout index: %v", err)
+		return
+	}
+	valA, valB := binary.BigEndian.Uint32(fanoutMsg[:4]), binary.BigEndian.Uint32(fanoutMsg[4:])
+	if valA != protocol.ToTL(protocol.TypeFanoutIndex, 4) {
+		log.Printf("got unexpected type/value waiting for fanout message: %d/%d", valA>>16, valA&0xFFFF)
+		return
+	}
+	idx := int(valB)
 	if idx < 0 || idx >= len(socks) {
 		log.Printf("new conn invalid index %v", idx)
 		return
