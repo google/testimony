@@ -111,3 +111,4 @@ done
 rm -rf $DIR
 sudo ip link delete $DUMMY || Error "Failed to clean up dummy $DUMMY"
 Info "SUCCESS"
+exit 0
