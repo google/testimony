@@ -14,6 +14,8 @@ these sockets, as well as which user should have access to which socket.  This
 allows admins to easily set up access to a restricted set of packets for
 specific users.
 
+For discussion, questions, etc, use testimony-discuss@googlegroups.com.
+
 Detailed Design
 ---------------
 
