@@ -28,6 +28,6 @@ func main() {
 	}
 	sort.Ints(keys)
 	for _, k := range keys {
-		fmt.Printf("#define TESTIMONY_PROTOCOL_TYPE_%s %d\n", protocol.TypeNames[uint32(k)], k)
+		fmt.Printf("#define TESTIMONY_PROTOCOL_TYPE_%s %d\n", protocol.TypeNames[protocol.Type(k)], k)
 	}
 }
