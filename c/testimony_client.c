@@ -40,8 +40,8 @@ int ParseOption(int key, char* arg, struct argp_state* state) {
 
 int main(int argc, char** argv) {
   int r;
-  struct tpacket_block_desc* block;
-  struct tpacket3_hdr* packet;
+  const struct tpacket_block_desc* block;
+  const struct tpacket3_hdr* packet;
   const uint8_t *packet_data;
   const uint8_t *packet_data_limit;
   testimony t;

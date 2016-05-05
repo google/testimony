@@ -335,7 +335,7 @@ int testimony_close(testimony t) {
 }
 
 int testimony_get_block(testimony t, int timeout_millis,
-                        struct tpacket_block_desc** block) {
+                        const struct tpacket_block_desc** block) {
   struct pollfd pfd;
   uint32_t blockidx, old_count;
   int r;
@@ -381,7 +381,7 @@ int testimony_get_block(testimony t, int timeout_millis,
     return -EIO;
   }
   *block =
-      (struct tpacket_block_desc*)(t->ring + t->conn.block_size * blockidx);
+      (const struct tpacket_block_desc*)(t->ring + t->conn.block_size * blockidx);
 #ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   if ((old_count = __sync_val_compare_and_swap(
       t->block_counts + blockidx, 0, (*block)->hdr.bh1.num_pkts)) != 0) {
@@ -395,7 +395,7 @@ int testimony_get_block(testimony t, int timeout_millis,
 
 static const uint32_t kInvalidBlockIndex = 0xFFFFFFFF;
 
-static uint32_t testimony_block_index(testimony t, struct tpacket_block_desc* block) {
+static uint32_t testimony_block_index(testimony t, const struct tpacket_block_desc* block) {
   size_t blockptr = (size_t)block;
   blockptr -= (size_t)t->ring;
   blockptr /= t->conn.block_size;
@@ -406,7 +406,7 @@ static uint32_t testimony_block_index(testimony t, struct tpacket_block_desc* bl
   return blockptr;
 }
 
-int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
+int testimony_return_block(testimony t, const struct tpacket_block_desc* block) {
   int r;
   uint32_t old_count;
   uint32_t blockidx = testimony_block_index(t, block);
@@ -432,7 +432,7 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block) {
   return 0;
 }
 
-int testimony_return_packets(testimony t, struct tpacket_block_desc* block, uint32_t packets) {
+int testimony_return_packets(testimony t, const struct tpacket_block_desc* block, uint32_t packets) {
 #ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   uint32_t blockidx = testimony_block_index(t, block);
   uint32_t count;
@@ -458,7 +458,7 @@ int testimony_return_packets(testimony t, struct tpacket_block_desc* block, uint
 char* testimony_error(testimony t) { return t->errbuf; }
 
 struct testimony_iter_internal {
-  struct tpacket_block_desc* block;
+  const struct tpacket_block_desc* block;
   uint8_t* pkt;
   int left;
 };
@@ -473,7 +473,7 @@ int testimony_iter_init(testimony_iter* iter) {
 }
 
 int testimony_iter_reset(testimony_iter iter,
-                         struct tpacket_block_desc* block) {
+                         const struct tpacket_block_desc* block) {
   if (block->version != TPACKET_V3) {
     return -EPROTONOSUPPORT;
   }
@@ -483,18 +483,18 @@ int testimony_iter_reset(testimony_iter iter,
   return 0;
 }
 
-struct tpacket3_hdr* testimony_iter_next(testimony_iter iter) {
+const struct tpacket3_hdr* testimony_iter_next(testimony_iter iter) {
   if (!iter->left) {
     return NULL;
   }
   iter->left--;
   if (iter->pkt) {
-    iter->pkt += ((struct tpacket3_hdr*)iter->pkt)->tp_next_offset;
+    iter->pkt += ((const struct tpacket3_hdr*)iter->pkt)->tp_next_offset;
   } else {
     iter->pkt =
         (uint8_t*)iter->block + iter->block->hdr.bh1.offset_to_first_pkt;
   }
-  return (struct tpacket3_hdr*)iter->pkt;
+  return (const struct tpacket3_hdr*)iter->pkt;
 }
 
 int testimony_iter_close(testimony_iter iter) {

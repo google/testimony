@@ -81,9 +81,9 @@ int testimony_close(testimony t);
 // Gets a new block of packets from testimony.
 // If timeout_millis < 0, block forever.  If == 0, don't block.  If > 0, block
 // for at most the given number of milliseconds.
-int testimony_get_block(testimony t, int timeout_millis, struct tpacket_block_desc** block);
+int testimony_get_block(testimony t, int timeout_millis, const struct tpacket_block_desc** block);
 // Returns a processed block of packets back to testimony.
-int testimony_return_block(testimony t, struct tpacket_block_desc* block);
+int testimony_return_block(testimony t, const struct tpacket_block_desc* block);
 
 // testimony_return_packets counts the number of packets processed in a
 // testimony block and auto-returns the block after the Nth call, where N is the
@@ -102,7 +102,7 @@ int testimony_return_block(testimony t, struct tpacket_block_desc* block);
 //     // testimony_return_packets(t, block, 1), where N is the number of
 //     // packets in the block.
 //   }
-int testimony_return_packets(testimony t, struct tpacket_block_desc* block, uint32_t packets);
+int testimony_return_packets(testimony t, const struct tpacket_block_desc* block, uint32_t packets);
 
 struct testimony_iter_internal;
 // testimony_iter provides an easy method for iterating over packets
@@ -130,9 +130,9 @@ typedef struct testimony_iter_internal* testimony_iter;
 int testimony_iter_init(testimony_iter* iter);
 // Reset iterator to iterate over a new block.
 int testimony_iter_reset(
-    testimony_iter iter, struct tpacket_block_desc* block);
+    testimony_iter iter, const struct tpacket_block_desc* block);
 // Return the next packet in the block, or NULL if we have no more packets.
-struct tpacket3_hdr* testimony_iter_next(testimony_iter iter);
+const struct tpacket3_hdr* testimony_iter_next(testimony_iter iter);
 // Clean up the iterator.  Use of iter after this call will break.
 int testimony_iter_close(testimony_iter iter);
 
