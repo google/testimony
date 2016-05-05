@@ -140,9 +140,9 @@ int testimony_iter_close(testimony_iter iter);
 // from a tpacket3 packet header.  The returned buffer will be pkt->tp_snaplen
 // bytes long.  pkt->tp_len is the length of the original packet, and may
 // be >= tp_snaplen.
-uint8_t* testimony_packet_data(struct tpacket3_hdr* pkt);
+const uint8_t* testimony_packet_data(const struct tpacket3_hdr* pkt);
 // testimony_packet_nanos is the nanosecond timestamp for the given packet.
-int64_t testimony_packet_nanos(struct tpacket3_hdr* pkt);
+int64_t testimony_packet_nanos(const struct tpacket3_hdr* pkt);
 
 #ifdef __cplusplus
 }
