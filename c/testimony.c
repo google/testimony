@@ -346,7 +346,7 @@ int testimony_get_block(testimony t, int timeout_millis,
     return -EINVAL;
   }
   while (1) {
-    if (timeout_millis >= 0) {
+    if (timeout_millis >= 0 && t->buf_start == t->buf_limit) {
       memset(&pfd, 0, sizeof(pfd));
       pfd.fd = t->sock_fd;
       pfd.events = POLLIN;
