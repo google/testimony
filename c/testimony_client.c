@@ -42,8 +42,8 @@ int main(int argc, char** argv) {
   int r;
   struct tpacket_block_desc* block;
   struct tpacket3_hdr* packet;
-  uint8_t *packet_data;
-  uint8_t *packet_data_limit;
+  const uint8_t *packet_data;
+  const uint8_t *packet_data_limit;
   testimony t;
 
   const char* s = "STRING";

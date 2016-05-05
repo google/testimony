@@ -502,10 +502,10 @@ int testimony_iter_close(testimony_iter iter) {
   return 0;
 }
 
-uint8_t* testimony_packet_data(struct tpacket3_hdr* pkt) {
-  return (uint8_t*)pkt + pkt->tp_mac;
+const uint8_t* testimony_packet_data(const struct tpacket3_hdr* pkt) {
+  return (const uint8_t*)pkt + pkt->tp_mac;
 }
-int64_t testimony_packet_nanos(struct tpacket3_hdr* pkt) {
+int64_t testimony_packet_nanos(const struct tpacket3_hdr* pkt) {
   return (int64_t)pkt->tp_sec * 1000000000LL + pkt->tp_nsec;
 }
 
