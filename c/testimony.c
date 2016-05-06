@@ -90,6 +90,7 @@ static int recv_t(testimony t, uint8_t* out, size_t s) {
         errno = ECANCELED;
         return -1;
       } else if (r < 0) {
+        if (errno == EINTR) { continue; }
         return -1;
       }
       t->buf_limit = t->buf_start + r;
@@ -336,6 +337,14 @@ int testimony_close(testimony t) {
 
 int testimony_get_block(testimony t, int timeout_millis,
                         const struct tpacket_block_desc** block) {
+  // TODO:  Currently, testimony_get_block may block for longer than
+  // timeout_millis, if either:
+  //   1) the poll() is interrupted with a signal and restarts (EINTR handling)
+  //   2) the recv (in recv_t) is unblocked by poll, but blocks before it can
+  //      read in all the bytes it needs
+  //   3) we block on the poll, read in a TLV, then block again
+  // In short, we're really bad at using timeout_millis... should probably do
+  // something about that.
   struct pollfd pfd;
   uint32_t blockidx, old_count;
   int r;
@@ -352,6 +361,7 @@ int testimony_get_block(testimony t, int timeout_millis,
       pfd.events = POLLIN;
       r = poll(&pfd, 1, timeout_millis);
       if (r < 0) {
+        if (errno == EINTR) { continue; }
         TERR("testimony poll of socket failed");
         return -errno;
       }
