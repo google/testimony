@@ -74,8 +74,14 @@ static void set_be_32(uint8_t* a, uint32_t x) {
 #define TERR(msg, ...)                                              \
   do {                                                              \
     int err = errno;                                                \
-    snprintf(t->errbuf, TESTIMONY_ERRBUF_SIZE, msg, ##__VA_ARGS__); \
+    snprintf(t->errbuf, TESTIMONY_ERRBUF_SIZE,                      \
+             msg ": %s", ##__VA_ARGS__, strerror(err));             \
     errno = err;                                                    \
+  } while (0)
+#define TERR_SET(errno_val, msg, ...)                               \
+  do {                                                              \
+    errno = errno_val;                                              \
+    TERR(msg, ##__VA_ARGS__);                                       \
   } while (0)
 static int recv_t(testimony t, uint8_t* out, size_t s) {
   int r;
@@ -170,6 +176,7 @@ static int recv_file_descriptor(int socket) {
     }
   }
 
+  errno = EIO;
   return -1;
 }
 
@@ -226,8 +233,7 @@ int testimony_connect(testimony* tp, const char* socket_name) {
     TERR("recv of protocol version failed");
     goto fail;
   } else if (version != TESTIMONY_VERSION) {
-    TERR("received unsupported protocol version %d", version);
-    errno = EPROTONOSUPPORT;
+    TERR_SET(EPROTONOSUPPORT, "received unsupported protocol version %d", version);
     goto fail;
   }
   proto_typ = TESTIMONY_PROTOCOL_TYPE_Error;
@@ -271,8 +277,7 @@ int testimony_connect(testimony* tp, const char* socket_name) {
     }
   }
   if (t->conn.fanout_size == 0 || t->conn.block_size == 0 || t->conn.block_nr == 0) {
-    TERR("didn't get fanout size and block size/nr");
-    errno = EINVAL;
+    TERR_SET(EINVAL, "didn't get fanout size and block size/nr");
     goto fail;
   }
   *tp = t;
@@ -289,26 +294,26 @@ int testimony_init(testimony t) {
   uint8_t msg[4];
   int r;
   if (t->ring) {
-    TERR("testimony has already been initiated");
-    return -EINVAL;
+    TERR_SET(EINVAL, "testimony has already been initiated");
+    return -errno;
   }
   set_be_32(msg, (TESTIMONY_PROTOCOL_TYPE_FanoutIndex << 16) + 4);
   r = send(t->sock_fd, &msg, sizeof(msg), 0);
   if (r < 0) {
     TERR("send of fanout index type");
-    return -EIO;
+    return -errno;
   }
   set_be_32(msg, t->conn.fanout_index);
   r = send(t->sock_fd, &msg, sizeof(msg), 0);
   if (r < 0) {
     TERR("send of fanout index failed");
-    return -EIO;
+    return -errno;
   }
 
   t->afpacket_fd = recv_file_descriptor(t->sock_fd);
   if (t->afpacket_fd < 0) {
     TERR("recv of file descriptor failed");
-    return -EIO;
+    return -errno;
   }
 
   // calloc inits memory to zero
@@ -319,7 +324,7 @@ int testimony_init(testimony t) {
   if (t->ring == MAP_FAILED) {
     t->ring = 0;
     TERR("local mmap of file descriptor failed");
-    return -EINVAL;
+    return -errno;
   }
   return 0;
 }
@@ -351,8 +356,8 @@ int testimony_get_block(testimony t, int timeout_millis,
   uint32_t typ;
   *block = NULL;
   if (t->sock_fd == 0 || t->ring == 0) {
-    TERR("testimony is not yet initiated, run testimony_init");
-    return -EINVAL;
+    TERR_SET(EINVAL, "testimony is not yet initiated, run testimony_init");
+    return -errno;
   }
   while (1) {
     if (timeout_millis >= 0 && t->buf_start == t->buf_limit) {
@@ -386,18 +391,18 @@ int testimony_get_block(testimony t, int timeout_millis,
     }
   }
   if (blockidx >= t->conn.block_nr) {
-    TERR("received invalid block index %d, should be [0, %d)", (int)blockidx,
-         (int)t->conn.block_nr);
-    return -EIO;
+    TERR_SET(EIO, "received invalid block index %d, should be [0, %d)",
+             (int)blockidx, (int)t->conn.block_nr);
+    return -errno;
   }
   *block =
       (const struct tpacket_block_desc*)(t->ring + t->conn.block_size * blockidx);
 #ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   if ((old_count = __sync_val_compare_and_swap(
       t->block_counts + blockidx, 0, (*block)->hdr.bh1.num_pkts)) != 0) {
-    TERR("block count CAS failed for block %d, current count %d != 0",
-         (int)blockidx, (int)old_count);
-    return -EIO;
+    TERR_SET(EIO, "block count CAS failed for block %d, current count %d != 0",
+             (int)blockidx, (int)old_count);
+    return -errno;
   }
 #endif
   return 0;
@@ -410,7 +415,6 @@ static uint32_t testimony_block_index(testimony t, const struct tpacket_block_de
   blockptr -= (size_t)t->ring;
   blockptr /= t->conn.block_size;
   if (blockptr >= t->conn.block_nr) {
-    TERR("block does not appear to have come from this testimony instance");
     return kInvalidBlockIndex;
   }
   return blockptr;
@@ -421,17 +425,17 @@ int testimony_return_block(testimony t, const struct tpacket_block_desc* block) 
   uint32_t old_count;
   uint32_t blockidx = testimony_block_index(t, block);
   if (blockidx == kInvalidBlockIndex) {
-    TERR("block does not appear to have come from this testimony instance");
-    return -EINVAL;
+    TERR_SET(EINVAL, "block does not appear to have come from this testimony instance");
+    return -errno;
   }
 #ifdef __GCC_HAVE_SYNC_COMPARE_AND_SWAP_4
   // Set block count for this block to zero (& with 0), and make sure the packet
   // count was sane.
   old_count = __sync_fetch_and_and(t->block_counts + blockidx, 0);
   if (old_count != 0 && old_count != block->hdr.bh1.num_pkts) {
-    TERR("block count invalid... maybe testimony_return_block and "
-         "testimony_return_packet were both called?");
-    return -EINVAL;
+    TERR_SET(EINVAL, "block count invalid... maybe testimony_return_block and "
+             "testimony_return_packet were both called?");
+    return -errno;
   }
 #endif
   r = send_be_32(t->sock_fd, blockidx);
@@ -447,21 +451,21 @@ int testimony_return_packets(testimony t, const struct tpacket_block_desc* block
   uint32_t blockidx = testimony_block_index(t, block);
   uint32_t count;
   if (blockidx == kInvalidBlockIndex) {
-    TERR("block does not appear to have come from this testimony instance");
-    return -EINVAL;
+    TERR_SET(EINVAL, "block does not appear to have come from this testimony instance");
+    return -errno;
   }
   count = __sync_fetch_and_sub(t->block_counts + blockidx, packets);
   if (count == packets) {
     return testimony_return_block(t, block);
   } else if (count < packets) {
-    TERR("return_packets amount overflows number of packets");
-    return -EINVAL;
+    TERR_SET(EINVAL, "return_packets amount overflows number of packets");
+    return -errno;
   }
   return 0;
 #else
-  TERR("compiler does not support atomics, "
-       "testimony_return_packet not available");
-  return -EINVAL;
+  TERR_SET(EINVAL, "compiler does not support atomics, "
+           "testimony_return_packet not available");
+  return -errno;
 #endif
 }
 
