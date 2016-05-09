@@ -129,43 +129,47 @@ func (t Testimony) handle(socks []*socket, c *net.UnixConn) {
 			c.Close()
 		}
 	}()
-	log.Printf("Received new connection %v", c.RemoteAddr())
+	connStr := c.RemoteAddr().String()
+	log.Printf("Received new connection %q", connStr)
 	var version [1]byte
 	version[0] = protocolVersion
 	if _, err := c.Write(version[:]); err != nil {
-		log.Printf("new conn failed to write version: %v", err)
+		log.Printf("new conn %q failed to write version: %v", connStr, err)
 		return
 	}
 	conf := socks[0].conf
 	if err := protocol.SendUint32(c, protocol.TypeFanoutSize, uint32(len(socks))); err != nil {
-		log.Printf("new conn failed to send fanout size: %v", err)
+		log.Printf("new conn %q failed to send fanout size: %v", connStr, err)
 		return
 	}
 	if err := protocol.SendUint32(c, protocol.TypeBlockSize, uint32(conf.BlockSize)); err != nil {
-		log.Printf("new conn failed to send block size: %v", err)
+		log.Printf("new conn %q failed to send block size: %v", connStr, err)
 		return
 	}
 	if err := protocol.SendUint32(c, protocol.TypeNumBlocks, uint32(conf.NumBlocks)); err != nil {
-		log.Printf("new conn failed to send number of blocks: %v", err)
+		log.Printf("new conn %q failed to send number of blocks: %v", connStr, err)
 		return
 	}
 	if err := protocol.SendType(c, protocol.TypeWaitingForFanoutIndex); err != nil {
-		log.Printf("new conn failed to send wait: %v", err)
+		log.Printf("new conn %q failed to send wait: %v", connStr, err)
 		return
 	}
 	var fanoutMsg [8]byte
-	if _, err := io.ReadFull(c, fanoutMsg[:]); err != nil {
-		log.Printf("new conn failed to read fanout index: %v", err)
+	if _, err := io.ReadFull(c, fanoutMsg[:]); err == io.EOF {
+		log.Printf("new conn %q closed early, probably just gathering connection data", connStr)
+		return
+	} else if err != nil {
+		log.Printf("new conn %q failed to read fanout index: %v", connStr, err)
 		return
 	}
 	valA, valB := binary.BigEndian.Uint32(fanoutMsg[:4]), binary.BigEndian.Uint32(fanoutMsg[4:])
 	if valA != protocol.ToTL(protocol.TypeFanoutIndex, 4) {
-		log.Printf("got unexpected type/value waiting for fanout message: %d/%d", valA>>16, valA&0xFFFF)
+		log.Printf("new conn %q got unexpected type/value waiting for fanout message: %d/%d", connStr, valA>>16, valA&0xFFFF)
 		return
 	}
 	idx := int(valB)
 	if idx < 0 || idx >= len(socks) {
-		log.Printf("new conn invalid index %v", idx)
+		log.Printf("new conn %q invalid index %v", connStr, idx)
 		return
 	}
 	sock := socks[idx]
@@ -174,10 +178,10 @@ func (t Testimony) handle(socks []*socket, c *net.UnixConn) {
 	n, n2, err := c.WriteMsgUnix(
 		msg[:], fdMsg, nil)
 	if err != nil || n != len(msg) || n2 != len(fdMsg) {
-		log.Printf("new conn failed to send file descriptor: %v", err)
+		log.Printf("new conn %q failed to send file descriptor: %v", connStr, err)
 		return
 	}
-	vlog.V(2, "new conn spun up, passing off to socket")
+	vlog.V(2, "new conn %q spun up, passing off to socket", connStr)
 	sock.newConns <- c
 	c = nil // so it doesn't get closed by deferred func.
 }

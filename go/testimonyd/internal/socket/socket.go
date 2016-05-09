@@ -18,6 +18,7 @@ package socket
 #include <linux/if_packet.h>
 #include <linux/filter.h>
 #include <stdlib.h>  // for C.free
+#include <sys/socket.h>  // for SOL_PACKET, getsockopt
 
 struct sock_fprog;
 
@@ -135,10 +136,31 @@ func (s *socket) getNewBlocks() {
 	}
 }
 
+func (s *socket) reportStats() {
+	var totalPackets, totalDrops uint64
+	// getting statistics returns the stats since the last invocation.  We clear
+	// counters by doing an initial read we ignore.
+	s.stats()
+	const seconds = 60
+	for range time.Tick(time.Second * seconds) {
+		// Output stats to log on each full round of a ring.
+		stats, err := s.stats()
+		if err != nil {
+			log.Printf("error getting statistics: %v", err)
+		} else {
+			totalPackets += uint64(stats.tp_packets)
+			totalDrops += uint64(stats.tp_drops)
+			vlog.V(1, "%v stats: %d packets (%.02fpps), %d drops (%.02fpps) since last log, %d packets, %d drops total", s,
+				stats.tp_packets, float64(stats.tp_packets)/seconds, stats.tp_drops, float64(stats.tp_drops)/seconds, totalPackets, totalDrops)
+		}
+	}
+}
+
 // run handles new connections, old connections, new blocks... basically
 // everything.
 func (s *socket) run() {
 	go s.getNewBlocks()
+	go s.reportStats()
 	for {
 		select {
 		case c := <-s.newConns:
@@ -201,12 +223,12 @@ func (c *conn) handleReads() {
 			if length != 0 {
 				val = make([]byte, length)
 				if _, err := io.ReadFull(c.c, val); err != nil {
-					vlog.V(1, "%v read TLV %d length %d: %v", c, typ, length, err)
+					vlog.V(2, "%v read TLV %d length %d: %v", c, typ, length, err)
 					return
 				}
 			}
 			if err := c.handleTLV(typ, val); err != nil {
-				vlog.V(1, "%v handling type %d: %v", c, typ, val)
+				vlog.V(2, "%v handling type %d: %v", c, typ, val)
 				return
 			}
 		} else {
@@ -402,4 +424,13 @@ func compileFilter(iface, filt string) ([]C.struct_sock_filter, error) {
 		})
 	}
 	return bpfs, nil
+}
+
+func (s *socket) stats() (*C.struct_tpacket_stats_v3, error) {
+	var out C.struct_tpacket_stats_v3
+	size := C.socklen_t(unsafe.Sizeof(out))
+	if _, err := C.getsockopt(C.int(s.fd), C.SOL_PACKET, C.PACKET_STATISTICS, unsafe.Pointer(&out), &size); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
