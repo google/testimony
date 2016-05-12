@@ -24,10 +24,15 @@ import (
 	"os/user"
 	"strconv"
 	"syscall"
+	"unsafe"
 
 	"github.com/google/testimony/go/protocol"
 	"github.com/google/testimony/go/testimonyd/internal/vlog"
 )
+
+// #include <grp.h>
+// #include <stdlib.h>
+import "C"
 
 // Testimony is the configuration parsed from the config file.
 type Testimony []SocketConfig
@@ -43,7 +48,7 @@ type SocketConfig struct {
 	BlockTimeoutMillis int    // timeout for filling up a single block
 	FanoutType         int    // which type of fanout to use (see linux/if_packet.h)
 	FanoutSize         int    // number of threads to fan out to
-	User               string // user to provide the socket to (will chown it)
+	User, Group        string // user/group to provide the socket to (will chown it)
 	Filter             string // BPF filter to apply to this socket
 }
 
@@ -59,6 +64,25 @@ func (s SocketConfig) uid() (int, error) {
 		return 0, fmt.Errorf("could not get user: %v", err)
 	}
 	return strconv.Atoi(u.Uid)
+}
+
+func (s SocketConfig) gid() (int, error) {
+	// Sadly, at present Go doesn't have group functions to match its os/user
+	// functions... so we jump down into C.
+	if s.Group == "" {
+		return 0, nil
+	}
+	groupName := C.CString(s.Group)
+	defer C.free(unsafe.Pointer(groupName))
+	var buf [2048]byte
+	var grp C.struct_group
+	var grpPtr *C.struct_group
+	if _, err := C.getgrnam_r(groupName, &grp, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)), &grpPtr); err != nil {
+		return -1, err
+	} else if grpPtr == nil {
+		return -1, fmt.Errorf("group %q not found", s.Group)
+	}
+	return int(grpPtr.gr_gid), nil
 }
 
 // RunTestimony runs the testimonyd server given the passed in configuration.
@@ -106,8 +130,12 @@ func setPermissions(sc SocketConfig) error {
 	if err != nil {
 		return fmt.Errorf("could not get uid to change to: %v", err)
 	}
-	vlog.V(1, "chowning %q to %d", sc.SocketName, uid)
-	if err := syscall.Chown(sc.SocketName, uid, 0); err != nil {
+	gid, err := sc.gid()
+	if err != nil {
+		return fmt.Errorf("could not get gid to change to: %v", err)
+	}
+	vlog.V(1, "chowning %q to %d/%d", sc.SocketName, uid, gid)
+	if err := syscall.Chown(sc.SocketName, uid, gid); err != nil {
 		return fmt.Errorf("unable to chown to (%d, 0): %v", uid, err)
 	}
 	return nil
