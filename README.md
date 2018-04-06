@@ -56,6 +56,10 @@ these configuration options:
      `MemoryRegionSize` is `BlockSize * NumBlocks`.  FanoutSize can be
      considered the number of parallel processes that want to access packet
      data.
+*   **FanoutID:**  Integer fanout ID to use when setting socket options. These
+     are globally unique so it can be tuned to avoid conflicts with other
+     processes that use AF_PACKET. If unspecified or 0 an ID will be auto
+     assigned starting with 1.
 *   **User:** This socket will be owned by the given user, mode `0600`.  This
      allows root to provide different sockets with different capabilities to
      specific users.

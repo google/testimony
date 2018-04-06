@@ -48,6 +48,7 @@ type SocketConfig struct {
 	BlockTimeoutMillis int    // timeout for filling up a single block
 	FanoutType         int    // which type of fanout to use (see linux/if_packet.h)
 	FanoutSize         int    // number of threads to fan out to
+	FanoutID           int    // fanout id to avoid conflicts
 	User, Group        string // user/group to provide the socket to (will chown it)
 	Filter             string // BPF filter to apply to this socket
 }
@@ -87,8 +88,22 @@ func (s SocketConfig) gid() (int, error) {
 
 // RunTestimony runs the testimonyd server given the passed in configuration.
 func RunTestimony(t Testimony) {
-	fanoutID := 0
+	autoID := 1
 	names := map[string]bool{}
+	// Populate a map of manually defined IDs to avoid auto assignment conflicts.
+	ids := map[int]bool{}
+	for _, sc := range t {
+		if sc.FanoutID < 0 {
+			log.Fatalf("invalid config: %d is not a valid FanoutID", sc.FanoutID)
+		}
+		if ids[sc.FanoutID] {
+			log.Fatalf("invalid config: duplicate FanoutID %d", sc.FanoutID)
+		}
+		if sc.FanoutID > 0 {
+			ids[sc.FanoutID] = true
+		}
+	}
+
 	for _, sc := range t {
 		// Check for duplicate socket names
 		if names[sc.SocketName] {
@@ -96,9 +111,18 @@ func RunTestimony(t Testimony) {
 		}
 		names[sc.SocketName] = true
 
+		// Set fanoutID from config or find next available id.
+		if sc.FanoutID > 0 {
+			fanoutID := sc.FanoutID
+		} else {
+			for ids[autoID] {
+				autoID++
+			}
+			fanoutID := autoID
+			autoID++
+		}
 		// Set up FanoutSize sockets and start goroutines to manage each.
 		var socks []*socket
-		fanoutID++
 		for i := 0; i < sc.FanoutSize; i++ {
 			sock, err := newSocket(sc, fanoutID, i)
 			if err != nil {
