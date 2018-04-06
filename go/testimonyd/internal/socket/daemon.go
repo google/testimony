@@ -88,6 +88,7 @@ func (s SocketConfig) gid() (int, error) {
 
 // RunTestimony runs the testimonyd server given the passed in configuration.
 func RunTestimony(t Testimony) {
+	fanoutID := 0
 	autoID := 1
 	names := map[string]bool{}
 	// Populate a map of manually defined IDs to avoid auto assignment conflicts.
@@ -113,12 +114,12 @@ func RunTestimony(t Testimony) {
 
 		// Set fanoutID from config or find next available id.
 		if sc.FanoutID > 0 {
-			fanoutID := sc.FanoutID
+			fanoutID = sc.FanoutID
 		} else {
 			for ids[autoID] {
 				autoID++
 			}
-			fanoutID := autoID
+			fanoutID = autoID
 			autoID++
 		}
 		// Set up FanoutSize sockets and start goroutines to manage each.
