@@ -27,7 +27,9 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
              int fanout_id, int fanout_size, int fanout_type,
              int filter_size, struct sock_filter* filters,
              // Outputs:
-             int* fd, void** ring, const char** err);
+			 int* fd, void** ring, const char** err);
+
+int WaitForBlocks(int sock_fd);
 */
 import "C"
 
@@ -120,13 +122,12 @@ func (s *socket) String() string {
 // which the run() method passes to clients.
 func (s *socket) getNewBlocks() {
 	blockIndex := 0
-	sleep := time.Millisecond
 	for {
 		b := s.blocks[blockIndex]
 		for !b.ready() {
-			time.Sleep(sleep)
-			if sleep < time.Second/4 {
-				sleep *= 2
+			if C.WaitForBlocks(C.int(s.fd)) < 0 {
+				log.Printf("C WaitForBlocks failed")
+				return
 			}
 		}
 		b.ref()

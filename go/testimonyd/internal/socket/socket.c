@@ -28,6 +28,26 @@
 #define UNIX_PATH_MAX 108
 #endif
 
+// Function for waiting for new blocks using select() function
+int WaitForBlocks(int sock_fd) {
+  struct timeval tv;
+  fd_set fds;
+  int res;
+
+  FD_ZERO(&fds);
+  FD_SET(sock_fd, &fds);
+
+  tv.tv_sec = 0;
+  tv.tv_usec = 10000;
+
+  if ((res = select(sock_fd + 1, &fds, NULL, NULL, &tv)) < 0) {
+    return -1;
+  }
+
+  return res;
+}
+
+
 // AFPacket does all of the necessary construction of an AF_PACKET socket
 // in C, to avoid a bunch of C.blah cgo stuff in daemon.go.  It takes in a bunch
 // of arguments and outputs an AF_PACKET socket file descriptor, a void*
