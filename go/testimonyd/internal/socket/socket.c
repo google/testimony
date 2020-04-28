@@ -28,23 +28,28 @@
 #define UNIX_PATH_MAX 108
 #endif
 
+#define SOCKET_READY_OR_TIMEOUT 0
+
 // Function for waiting for new blocks using select() function
+// Blocks until a block is ready from AF_PACKET socket.
+// Returns 0 if socket is ready or timeout, errno on failure (errno > 0).
 int WaitForBlocks(int sock_fd) {
   struct timeval tv;
   fd_set fds;
-  int res;
 
   FD_ZERO(&fds);
   FD_SET(sock_fd, &fds);
 
-  tv.tv_sec = 0;
-  tv.tv_usec = 10000;
+  tv.tv_sec = 1;
+  tv.tv_usec = 0;
 
-  if ((res = select(sock_fd + 1, &fds, NULL, NULL, &tv)) < 0) {
-    return -1;
+  // return error code if select() returns not 0 or 1
+  if (select(sock_fd + 1, &fds, NULL, NULL, &tv) < 0) {
+    return errno;
   }
 
-  return res;
+  // defined in go side
+  return SOCKET_READY_OR_TIMEOUT;
 }
 
 
