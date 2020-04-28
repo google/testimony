@@ -161,10 +161,10 @@ func (s *socket) reportStats() {
 // run handles new connections, old connections, new blocks... basically
 // everything.
 func (s *socket) run() {
+
+	selectErr := make(chan error, 1)
 	go func() {
-		if err := s.getNewBlocks(); err != nil { // error handling block
-			log.Print(err)
-		}
+		selectErr <- s.getNewBlocks()
 	}()
 	go s.reportStats()
 	for {
@@ -188,6 +188,8 @@ func (s *socket) run() {
 				}
 			}
 			b.unref()
+		case err := <-selectErr:
+			log.Fatal(err)
 		}
 	}
 }
