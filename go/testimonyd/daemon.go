@@ -51,5 +51,10 @@ func main() {
 	if err := json.NewDecoder(bytes.NewBuffer(confdata)).Decode(&t); err != nil {
 		log.Fatalf("could not parse configuration %q: %v", *confFilename, err)
 	}
+	for i, _ := range t {
+		if t[i].FanoutSize == 0 {
+			t[i].FanoutSize = 1
+		}
+	}
 	socket.RunTestimony(t)
 }
