@@ -107,3 +107,9 @@ available to process (and it references the block internally).  The client
 returns the block index to the server when it's done processing it, and the
 server unrefs that block.  When a block has no more references, it is returned
 to the kernel to be refilled with packets.
+
+
+### Installation ###
+
+Run install.sh after testimony building testimony.
+This script will create default config file `/etc/testimony.conf` and will add new testimony service.
