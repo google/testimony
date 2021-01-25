@@ -121,13 +121,13 @@ func (s *socket) String() string {
 
 // getNewBlocks is a goroutine that watches for new available packet blocks,
 // which the run() method passes to clients.
-func (s *socket) getNewBlocks() error {
+func (s *socket) getNewBlocks() {
 	blockIndex := 0
 	for {
 		b := s.blocks[blockIndex]
 		for !b.ready() {
 			if err := C.WaitForBlocks(C.int(s.fd)); err != 0 {
-				return fmt.Errorf("C WaitForBlocks failed: %s", syscall.Errno(err).Error())
+				log.Panicf("C WaitForBlocks failed: %s", syscall.Errno(err).Error())
 			}
 		}
 		b.ref()
@@ -161,10 +161,8 @@ func (s *socket) reportStats() {
 // run handles new connections, old connections, new blocks... basically
 // everything.
 func (s *socket) run() {
-
-	selectErr := make(chan error, 1)
 	go func() {
-		selectErr <- s.getNewBlocks()
+		s.getNewBlocks()
 	}()
 	go s.reportStats()
 	for {
@@ -188,9 +186,6 @@ func (s *socket) run() {
 				}
 			}
 			b.unref()
-		case err := <-selectErr:
-			log.Fatal(err)
-		}
 	}
 }
 
