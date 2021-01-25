@@ -186,6 +186,7 @@ func (s *socket) run() {
 				}
 			}
 			b.unref()
+		}
 	}
 }
 
