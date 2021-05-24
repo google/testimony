@@ -28,37 +28,21 @@
 #define UNIX_PATH_MAX 108
 #endif
 
-#define SOCKET_READY_OR_TIMEOUT 0
+#ifndef MAX_ORDER
+#define MAX_ORDER 11
+#endif
 
-// Function for waiting for new blocks using select() function
-// Blocks until a block is ready from AF_PACKET socket.
-// Returns 0 if socket is ready or timeout, errno on failure (errno > 0).
-int WaitForBlocks(int sock_fd) {
-  struct timeval tv;
-  fd_set fds;
 
-  FD_ZERO(&fds);
-  FD_SET(sock_fd, &fds);
-
-  tv.tv_sec = 1;
-  tv.tv_usec = 0;
-
-  // return error code if select() returns not 0 or 1
-  if (select(sock_fd + 1, &fds, NULL, NULL, &tv) < 0) {
-    return errno;
-  }
-
-  // defined in go side
-  return SOCKET_READY_OR_TIMEOUT;
+void getRecommendedBlockSize(int *result) {
+  *result = getpagesize() << MAX_ORDER;
 }
-
 
 // AFPacket does all of the necessary construction of an AF_PACKET socket
 // in C, to avoid a bunch of C.blah cgo stuff in daemon.go.  It takes in a bunch
 // of arguments and outputs an AF_PACKET socket file descriptor, a void*
 // pointing to the mmap'd region of that socket, and any error message.
 // Returns zero on success, on error returns -1 and sets errno.
-int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
+int AFPacket(const char* iface, int block_size, int frame_size, int block_nr, int block_ms,
              int fanout_id, int fanout_size, int fanout_type,
              int filter_size, struct sock_filter* filters,
              // outputs:
@@ -113,9 +97,9 @@ int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
   struct tpacket_req3 tp3;
   memset(&tp3, 0, sizeof(tp3));
   tp3.tp_block_size = block_size;
-  tp3.tp_frame_size = block_size;
+  tp3.tp_frame_size = frame_size;
   tp3.tp_block_nr = block_nr;
-  tp3.tp_frame_nr = block_nr;
+  tp3.tp_frame_nr = block_size * block_nr / frame_size;
   tp3.tp_retire_blk_tov = block_ms;  // timeout, ms
   r = setsockopt(*fd, SOL_PACKET, PACKET_RX_RING, &tp3, sizeof(tp3));
   if (r < 0) {

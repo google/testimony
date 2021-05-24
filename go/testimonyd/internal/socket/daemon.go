@@ -20,6 +20,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"math"
 	"os"
 	"os/user"
 	"strconv"
@@ -44,6 +45,7 @@ type SocketConfig struct {
 	SocketName         string // filename for the socket
 	Interface          string // interface to sniff packets on
 	BlockSize          int    // block size (in bytes) of a single packet block
+	FrameSize          int
 	NumBlocks          int    // number of packet blocks in the memory region
 	BlockTimeoutMillis int    // timeout for filling up a single block
 	FanoutType         int    // which type of fanout to use (see linux/if_packet.h)
@@ -122,6 +124,14 @@ func RunTestimony(t Testimony) {
 			fanoutID = autoID
 			autoID++
 		}
+
+		if(sc.BlockSize != getRecommendedBlockSize()) {
+			log.Printf("Current block size: %v, recommended block size is: %v", sc.BlockSize, getRecommendedBlockSize() )
+		}
+		if(math.Mod(float64(sc.BlockSize), float64(sc.FrameSize)) != 0) {
+			log.Fatalf("Frame Size: %v must be a divisor of Block Size: %v", sc.FrameSize, sc.BlockSize)
+		}
+		
 		// Set up FanoutSize sockets and start goroutines to manage each.
 		var socks []*socket
 		for i := 0; i < sc.FanoutSize; i++ {

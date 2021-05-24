@@ -62,6 +62,7 @@ cat > $CONFIG << EOF
       "SocketName": "$SOCKET"
     , "Interface": "$DUMMY"
     , "BlockSize": 1048576
+    , "FrameSize": 16384
     , "NumBlocks": 16
     , "BlockTimeoutMillis": 1000
     , "FanoutSize": 1
