@@ -22,14 +22,14 @@ package socket
 
 struct sock_fprog;
 
+void getRecommendedBlockSize(int* result);
+
 // See comments in socket.cc
-int AFPacket(const char* iface, int block_size, int block_nr, int block_ms,
+int AFPacket(const char* iface, int block_size, int frame_size, int block_nr, int block_ms,
              int fanout_id, int fanout_size, int fanout_type,
              int filter_size, struct sock_filter* filters,
              // Outputs:
 			 int* fd, void** ring, const char** err);
-
-int WaitForBlocks(int sock_fd);
 */
 import "C"
 
@@ -44,7 +44,6 @@ import (
 	"os/exec"
 	"strconv"
 	"sync/atomic"
-	"syscall"
 	"time"
 	"unsafe"
 
@@ -65,6 +64,12 @@ type socket struct {
 	blocks       []*block           // all blocks in the memory region
 	currentConns map[*conn]bool     // list of current connections a new block will be sent to
 	ring         uintptr            // pointer to memory region
+}
+
+func getRecommendedBlockSize() int {
+	var result C.int
+	C.getRecommendedBlockSize(&result)
+	return int(result)
 }
 
 // newSocket creates a new Socket object based on a config.
@@ -102,7 +107,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*socket, error) {
 	var fd C.int
 	var ring unsafe.Pointer
 	var errStr *C.char
-	if _, err := C.AFPacket(iface, C.int(sc.BlockSize), C.int(sc.NumBlocks),
+	if _, err := C.AFPacket(iface, C.int(sc.BlockSize), C.int(sc.FrameSize), C.int(sc.NumBlocks),
 		C.int(sc.BlockTimeoutMillis), C.int(fanoutID), C.int(sc.FanoutSize), C.int(sc.FanoutType),
 		filtsize, filt,
 		&fd, &ring, &errStr); err != nil {
@@ -123,12 +128,11 @@ func (s *socket) String() string {
 // which the run() method passes to clients.
 func (s *socket) getNewBlocks() {
 	blockIndex := 0
+	sleep := time.Millisecond * 50
 	for {
 		b := s.blocks[blockIndex]
 		for !b.ready() {
-			if err := C.WaitForBlocks(C.int(s.fd)); err != 0 {
-				log.Panicf("C WaitForBlocks failed: %s", syscall.Errno(err).Error())
-			}
+			time.Sleep(sleep)
 		}
 		b.ref()
 		vlog.V(3, "%v got new block %v", s, b)
