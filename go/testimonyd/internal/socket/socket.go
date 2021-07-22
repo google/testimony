@@ -149,12 +149,16 @@ func (s *socket) reportStats() {
 		if err != nil {
 			log.Printf("error getting statistics: %v", err)
 		} else {
+			client_status := "Sent to client"
 			totalPackets += uint64(stats.tp_packets)
 			totalDrops += uint64(stats.tp_drops)
-			vlog.V(1, "%v stats: %d packets (%.02fpps), %d drops (%.02fpps) (%.02f%% dropped) since last log, %d packets, %d drops total (%.02f%% dropped)", s,
-				stats.tp_packets, float64(stats.tp_packets)/seconds, stats.tp_drops, float64(stats.tp_drops)/seconds, float64(stats.tp_drops)/float64(stats.tp_drops+stats.tp_packets)*100,
-				totalPackets, totalDrops, float64(totalDrops)/float64(totalPackets+totalDrops)*100)
-		}
+			if len(s.currentConns) <= 0 {
+				client_status = "Not sent to client"
+			}
+			vlog.V(1, "%v stats: %v, %d packets (%.02fpps), %d drops (%.02fpps) (%.02f%% dropped) since last log, %d packets, %d drops total (%.02f%% dropped)", s, client_status,
+ 				stats.tp_packets, float64(stats.tp_packets)/seconds, stats.tp_drops, float64(stats.tp_drops)/seconds, float64(stats.tp_drops)/float64(stats.tp_drops+stats.tp_packets)*100,
+ 				totalPackets, totalDrops, float64(totalDrops)/float64(totalPackets+totalDrops)*100)
+ 		}
 	}
 }
 
