@@ -42,6 +42,10 @@ these configuration options:
      memory blocks of a specific size, until it either can't fit the next packet
      into the current block or a timeout is reached.  The larger the block, the
      more packets can be passed to the user at once.  BlockSize is in bytes.
+*   **FrameSize:** Number of frames. Frames are grouped in blocks. If FrameSize 
+     is a divisor of tp_block_size frames will be contiguously spaced by 'FrameSize'
+     bytes. If not, there will be a gap between the frames in blocks. This is because
+     a frame cannot be spawn across two blocks. 
 *   **NumBlocks:**  Number of blocks to allocate in memory.  `NumBlocks *
      BlockSize` is the total size in memory of the AF_PACKET packet memory
      region for a single fanout.
