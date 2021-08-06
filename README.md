@@ -66,6 +66,8 @@ these configuration options:
 *   **Filter:** BPF filter for this socket.  If this is set, testimony will
      guarantee that the socket passed to child processes has this filter locked
      in such a way that clients cannot remove it.
+*   **NumberOfClients:** Use this option to specify the expected number of 
+     clients to connect to the socket.
 
 ### Wire Protocol ###
 

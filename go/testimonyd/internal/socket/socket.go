@@ -116,7 +116,7 @@ func newSocket(sc SocketConfig, fanoutID int, num int) (*socket, error) {
 
 // String returns a unique string for this socket.
 func (s *socket) String() string {
-	return fmt.Sprintf("[S:%v:%v]", s.conf.SocketName, s.num)
+	return fmt.Sprintf("[S:%v; fid:%v]", s.conf.SocketName, s.num)
 }
 
 // getNewBlocks is a goroutine that watches for new available packet blocks,
@@ -149,12 +149,22 @@ func (s *socket) reportStats() {
 		if err != nil {
 			log.Printf("error getting statistics: %v", err)
 		} else {
-			totalPackets += uint64(stats.tp_packets)
-			totalDrops += uint64(stats.tp_drops)
-			vlog.V(1, "%v stats: %d packets (%.02fpps), %d drops (%.02fpps) (%.02f%% dropped) since last log, %d packets, %d drops total (%.02f%% dropped)", s,
-				stats.tp_packets, float64(stats.tp_packets)/seconds, stats.tp_drops, float64(stats.tp_drops)/seconds, float64(stats.tp_drops)/float64(stats.tp_drops+stats.tp_packets)*100,
+			client_status := "delivered to client"
+			if len(s.currentConns) <= 0 {
+				client_status = "discarded by testimony"
+			}
+			if s.conf.NumberOfClients == 0 {
+				vlog.V(1, "%v stats: connected - %d clients", s, len(s.currentConns))
+			} else {
+				vlog.V(1, "%v stats: connected - %d clients, still not connected - %d, therefore %v packets loosed for each unconnected client", s, len(s.currentConns), s.conf.NumberOfClients-len(s.currentConns), stats.tp_packets)
+			}
+			vlog.V(1, " %v stats: %d packets %v (%.02fpps), %d dropped in kernel (%.02fpps) (%.02f%% dropped) since last log, %d packets, %d drops total (%.02f%% dropped)",
+				s, stats.tp_packets, client_status, float64(stats.tp_packets)/seconds,
+				stats.tp_drops, float64(stats.tp_drops)/seconds,
+				float64(stats.tp_drops)/float64(stats.tp_drops+stats.tp_packets)*100,
 				totalPackets, totalDrops, float64(totalDrops)/float64(totalPackets+totalDrops)*100)
 		}
+
 	}
 }
 
