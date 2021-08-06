@@ -51,6 +51,7 @@ type SocketConfig struct {
 	FanoutID           int    // fanout id to avoid conflicts
 	User, Group        string // user/group to provide the socket to (will chown it)
 	Filter             string // BPF filter to apply to this socket
+	NumberOfClients    int    // Number of clients testimony working with
 }
 
 func (s SocketConfig) uid() (int, error) {
